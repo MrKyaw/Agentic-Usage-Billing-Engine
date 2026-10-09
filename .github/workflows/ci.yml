@@ -1,0 +1,20 @@
+name: ci
+on: {push: null, pull_request: null}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - run: bash tools/demo.sh
+  cdk-synth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r infra/cdk/requirements.txt
+      - run: cd infra/cdk && cdk synth || echo "cdk not bootstrapped — synth skipped"

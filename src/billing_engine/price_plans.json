@@ -1,0 +1,28 @@
+{
+  "plan_version": "2026-10-v1",
+  "currency": "USD (rating-only; no invoicing/tax in POC)",
+  "plans": {
+    "cloud_credits": {
+      "type": "flat",
+      "unit_price": 0.10,
+      "included_allowance": 0,
+      "description": "Generic compute credit"
+    },
+    "render_minutes": {
+      "type": "tiered",
+      "tiers": [
+        {"up_to": 1000, "unit_price": 0.05},
+        {"up_to": 10000, "unit_price": 0.04},
+        {"up_to": null, "unit_price": 0.03}
+      ],
+      "included_allowance": 100,
+      "description": "First 100 min included, then tiered"
+    },
+    "inference_tokens": {
+      "type": "flat",
+      "unit_price": 0.000002,
+      "included_allowance": 1000000,
+      "description": "1M tokens included per period"
+    }
+  }
+}
