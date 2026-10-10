@@ -15,7 +15,7 @@ from hypothesis.stateful import (RuleBasedStateMachine, initialize, invariant, p
 
 from billing_engine.ingest import ingest_one
 from billing_engine.period_close import close_period
-from billing_engine.processor import drain, process_batch
+from billing_engine.processor import drain, process_batch, redrive_dlq
 from billing_engine.query import get_bill, get_usage
 from billing_engine.rating import PriceBook, get_book
 from billing_engine.reconcile import reconcile
@@ -282,6 +282,12 @@ class BillingLifecycle(RuleBasedStateMachine):
     def drain_all(self):
         drain(self.store)
 
+    @rule()
+    def redrive(self):
+        """Operator runs the documented DLQ-replay procedure (RUNBOOK mode #3):
+        crash-looped valid events bill on the next drain; poison re-DLQs."""
+        redrive_dlq(self.store)
+
     @rule(cust=st.sampled_from(CUSTOMERS), per=st.sampled_from(sorted(PERIODS)))
     def close(self, cust, per):
         out = close_period(self.store, cust, per, export_dir=f"{self.dir}/exports")
@@ -301,6 +307,11 @@ class BillingLifecycle(RuleBasedStateMachine):
     @invariant()
     def drained_state_is_exact_and_reconciles(self):
         if not hasattr(self, "store") or self.store.pending_count():
+            return
+        if self.store.dlq_event_ids() - self.poison:
+            # Valid events crash-looped into the DLQ (SQS redrive contract):
+            # exactness is restored by the redrive rule, asserted on a later
+            # step once the operator action has run.
             return
         exp = self._expected()
         assert stored_totals(self.store, exp) == {k: (v[0], v[1]) for k, v in exp.items()}

@@ -78,3 +78,15 @@ def drain(store: Store, batch: int = 200, max_rounds: int = 1000) -> dict[str, i
         if store.pending_count() == 0:
             break
     return total
+
+
+def redrive_dlq(store: Store, limit: int = 500) -> int:
+    """Ops recovery (RUNBOOK mode #3): replay DLQ back to the inbox after the
+    cause is fixed. Crash-looped valid events bill on this pass; still-poison
+    events re-DLQ (bounded by the retry budget, never looping forever)."""
+    n = store.replay_dlq(limit=limit)
+    if n:
+        METRICS.inc("processor_dlq_replay_total", n)
+        METRICS.set_gauge("dlq_depth", store.dlq_count())
+        jlog("INFO", "dlq_redrive", replayed=n)
+    return n

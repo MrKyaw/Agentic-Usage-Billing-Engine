@@ -25,6 +25,8 @@ then reconcile. Ingest stays up (degraded, not down).
 **Triage:** inspect DLQ `reason`: `unratable: unknown metric` = producer sent a
 metric with no price plan (most common); `max_retries_exceeded` = transient DDB
 throttle or bug.
-**Fix:** unknown metric → add price plan (new `plan_version`), replay DLQ to
-queue; throttle → back off, replay. Replay is safe (idempotent).
-**Never:** delete DLQ without replay + reconcile.
+**Fix:** unknown metric → add price plan (new `plan_version`), then redrive:
+`redrive_dlq(store)` (processor) moves DLQ rows back with a fresh retry budget —
+idempotent, so already-billed redeliveries drop as duplicates and still-poison
+events re-DLQ bounded-ly. Throttle → back off, redrive. Then drain + reconcile.
+**Never:** delete DLQ without redrive + reconcile.

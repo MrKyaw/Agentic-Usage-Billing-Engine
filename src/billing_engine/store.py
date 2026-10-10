@@ -212,6 +212,35 @@ class Store:
     def dlq_count(self) -> int:
         return self._conn().execute("SELECT COUNT(*) FROM dlq").fetchone()[0]
 
+    def dlq_event_ids(self) -> set[str]:
+        """Ids currently parked in the DLQ that were never billed — the
+        ops-meaningful 'needs attention' set (unknown metric, crash-looped).
+        Already-billed redeliveries that later re-DLQ'd are excluded."""
+        c = self._conn()
+        return {r[0] for r in c.execute(
+            "SELECT DISTINCT event_id FROM dlq "
+            "WHERE event_id NOT IN (SELECT event_id FROM events)")}
+
+    def replay_dlq(self, limit: int = 500) -> int:
+        """Redrive: move DLQ rows back to the inbox with a fresh retry budget.
+
+        The documented recovery for RUNBOOK mode #3 (after the cause — bad
+        price plan, throttling, deploy bug — is fixed). Safe to repeat:
+        already-billed events redrive as duplicates (conditional put drops
+        them), still-poison events re-DLQ on their next pass.
+        Returns the number of rows redriven.
+        """
+        with self._tx() as c:
+            rows = c.execute(
+                "SELECT seq, event_id, payload FROM dlq ORDER BY seq LIMIT ?",
+                (limit,)).fetchall()
+            for r in rows:
+                c.execute("INSERT INTO inbox(event_id, payload, created_at) VALUES(?,?,?)",
+                          (r[1], r[2], time.time()))
+            c.execute("DELETE FROM dlq WHERE seq IN "
+                      "(SELECT seq FROM dlq ORDER BY seq LIMIT ?)", (limit,))
+            return len(rows)
+
     def reconcile_snapshot(self) -> tuple[set[str], set[str], dict[tuple[str, str, str], float]]:
         """(in-flight ids, DLQ ids, aggregate totals) from ONE read transaction, so
         an event processed mid-reconcile is never seen as both pending and billed.
