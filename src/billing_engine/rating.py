@@ -26,6 +26,11 @@ class PriceBook:
     def __init__(self, plan: dict[str, Any]):
         self.plan_version: str = plan["plan_version"]
         self.plans: dict[str, Any] = plan["plans"]
+        for metric, cfg in self.plans.items():
+            if cfg["type"] == "tiered" and (not cfg.get("tiers")
+                                            or cfg["tiers"][-1]["up_to"] is not None):
+                raise RatingError(f"tiered plan '{metric}' must end with an "
+                                  "open-ended tier (up_to: null)")
 
     @classmethod
     def load(cls, path: str | Path) -> "PriceBook":
@@ -64,7 +69,8 @@ class PriceBook:
         remaining = billable
         amount = 0.0
         prev_cap = 0.0
-        for tier in cfg["tiers"]:
+        # never exhausts: __init__ guarantees an open-ended last tier
+        for tier in cfg["tiers"]:  # pragma: no branch
             cap = tier["up_to"]
             width = float("inf") if cap is None else float(cap) - prev_cap
             take = min(remaining, width)

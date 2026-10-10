@@ -8,3 +8,11 @@ exports/
 .DS_Store
 cdk.out/
 node_modules/
+graphify-out/
+.coverage
+htmlcov/
+.hypothesis/
+reports/*.xml
+reports/*.json
+reports/*.csv
+reports/logs/

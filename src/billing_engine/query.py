@@ -18,11 +18,23 @@ def get_usage(store: Store, customer_id: str, period: str) -> dict[str, Any]:
     return {"customer_id": customer_id, "period": period, "lines": lines}
 
 
-def get_bill(store: Store, customer_id: str, period: str) -> dict[str, Any]:
+def get_bill(store: Store, customer_id: str, period: str,
+             live: bool = False) -> dict[str, Any]:
+    """Open periods are rated live. Closed periods return the frozen invoice;
+    usage that landed after close is surfaced as `post_close_delta`, never
+    silently folded into a closed bill. `live=True` ignores the freeze (used by
+    period close itself)."""
     usage = get_usage(store, customer_id, period)
-    total = round(sum(l["amount"] for l in usage["lines"]), 2)
-    close = store.get_close(customer_id, period)
+    total = round(sum((l["amount"] for l in usage["lines"]), 0.0), 2)
+    close = None if live else store.get_close(customer_id, period)
+    if close is None:
+        return {"customer_id": customer_id, "period": period,
+                "lines": usage["lines"], "total_amount": total,
+                "currency": "USD", "status": "open", "closed_at": None,
+                "post_close_delta": 0.0}
+    frozen = close["summary"]
     return {"customer_id": customer_id, "period": period,
-            "lines": usage["lines"], "total_amount": total,
-            "currency": "USD", "status": "closed" if close else "open",
-            "closed_at": close["closed_at"] if close else None}
+            "lines": frozen["lines"], "total_amount": frozen["total_amount"],
+            "currency": frozen.get("currency", "USD"), "status": "closed",
+            "closed_at": close["closed_at"],
+            "post_close_delta": round(total - frozen["total_amount"], 2)}

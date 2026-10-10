@@ -8,6 +8,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from billing_engine import rating  # noqa: E402
 
+pytestmark = pytest.mark.req("FR3")
+
 
 @pytest.fixture()
 def book():

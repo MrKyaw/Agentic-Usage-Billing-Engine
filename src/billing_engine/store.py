@@ -18,9 +18,9 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator
 
 
 SCHEMA = """
@@ -83,6 +83,10 @@ class Store:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._init_lock = threading.Lock()
+        # Threads of one process queue here instead of in SQLite's busy handler,
+        # which sleep-polls with up-to-100ms backoff and convoys under load.
+        self._write_lock = threading.Lock()
+        self.lock_timeout_s = 30.0
         self._initialized = False
 
     def _conn(self) -> sqlite3.Connection:
@@ -91,11 +95,16 @@ class Store:
             c = sqlite3.connect(self.db_path, timeout=30.0, isolation_level=None,
                                 check_same_thread=False)
             c.row_factory = sqlite3.Row
-            c.execute("PRAGMA journal_mode=WAL;")
-            c.execute("PRAGMA busy_timeout=30000;")
+            c.execute(f"PRAGMA busy_timeout={int(self.lock_timeout_s * 1000)};")
+            # no checkpoint inside an ingest COMMIT (fsyncs the DB file while the
+            # write lock is held); the processor runs checkpoint() instead
+            c.execute("PRAGMA wal_autocheckpoint=0;")
             self._local.conn = c
         with self._init_lock:
             if not self._initialized:
+                # persistent per DB file; SQLite answers "locked" here without
+                # consulting the busy handler, so concurrent first opens retry
+                self._retry_locked(c, "PRAGMA journal_mode=WAL")
                 c.executescript(SCHEMA)
                 self._initialized = True
             else:
@@ -117,49 +126,111 @@ class Store:
         with open(fp, "a") as f:
             f.write(json.dumps(payload, sort_keys=True) + "\n")
 
-    def enqueue(self, payload: dict[str, Any]) -> None:
-        c = self._conn()
-        c.execute("BEGIN IMMEDIATE")
+    def _retry_locked(self, c: sqlite3.Connection, sql: str) -> None:
+        """Run a lock-taking statement with short retries: SQLite's own busy
+        handler backs off to 100 ms sleeps, which leaves the lock idle while
+        waiters oversleep and blows the ingest p99 under load."""
+        deadline = time.monotonic() + self.lock_timeout_s
+        delay = 0.0002
+        c.execute("PRAGMA busy_timeout=0")
         try:
-            self.append_raw_log(payload)
-            c.execute("INSERT INTO inbox(event_id, payload, created_at) VALUES(?,?,?)",
-                      (payload["event_id"], json.dumps(payload), time.time()))
+            while True:
+                try:
+                    c.execute(sql)
+                    return
+                except sqlite3.OperationalError as e:
+                    if "locked" not in str(e) or time.monotonic() >= deadline:
+                        raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.002)
+        finally:
+            c.execute(f"PRAGMA busy_timeout={int(self.lock_timeout_s * 1000)}")
+
+    @contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        """Write transaction holding SQLite's RESERVED lock for its whole span, so
+        multi-statement writes are atomic and serialized across workers."""
+        c = self._conn()
+        with self._write_lock:
+            self._retry_locked(c, "BEGIN IMMEDIATE")
+            try:
+                yield c
+            except BaseException:
+                c.execute("ROLLBACK")
+                raise
             c.execute("COMMIT")
-        except Exception:
-            c.execute("ROLLBACK")
-            raise
+
+    def enqueue(self, payload: dict[str, Any]) -> None:
+        self.enqueue_many([payload])
+
+    def enqueue_many(self, payloads: list[dict[str, Any]]) -> None:
+        if not payloads:
+            return
+        with self._tx() as c:
+            now = time.time()
+            for p in payloads:
+                self.append_raw_log(p)
+                c.execute("INSERT INTO inbox(event_id, payload, created_at) VALUES(?,?,?)",
+                          (p["event_id"], json.dumps(p), now))
 
     def claim_batch(self, limit: int = 50, visibility_s: float = 60) -> list[dict[str, Any]]:
-        """Claim pending inbox rows (SQS receive analogue)."""
-        c = self._conn()
+        """Claim pending inbox rows (SQS receive analogue). Select + mark happen in
+        one transaction so two workers can never claim the same row."""
         now = time.time()
-        rows = c.execute(
-            "SELECT seq, event_id, payload, attempts FROM inbox "
-            "WHERE claimed_at IS NULL OR claimed_at < ? "
-            "ORDER BY seq LIMIT ?", (now - visibility_s, limit)).fetchall()
-        claimed = []
-        for r in rows:
-            c.execute("UPDATE inbox SET claimed_at=?, attempts=attempts+1 WHERE seq=?",
-                      (now, r["seq"]))
-            claimed.append({"seq": r["seq"], "event_id": r["event_id"],
-                            "payload": json.loads(r["payload"]),
-                            "attempts": r["attempts"] + 1})
-        return claimed
+        claimable = ("FROM inbox WHERE claimed_at IS NULL OR claimed_at < ? ")
+        # read-only peek: idle pollers must not take the write lock from ingest
+        if self._conn().execute(f"SELECT 1 {claimable} LIMIT 1",
+                                (now - visibility_s,)).fetchone() is None:
+            return []
+        with self._tx() as c:
+            rows = c.execute(
+                f"SELECT seq, event_id, payload, attempts {claimable}"
+                "ORDER BY seq LIMIT ?", (now - visibility_s, limit)).fetchall()
+            for r in rows:
+                c.execute("UPDATE inbox SET claimed_at=?, attempts=attempts+1 WHERE seq=?",
+                          (now, r["seq"]))
+        return [{"seq": r["seq"], "event_id": r["event_id"],
+                 "payload": json.loads(r["payload"]), "attempts": r["attempts"] + 1}
+                for r in rows]
 
     def ack(self, seq: int) -> None:
         self._conn().execute("DELETE FROM inbox WHERE seq=?", (seq,))
 
     def move_to_dlq(self, seq: int, event_id: str, payload: dict[str, Any], reason: str) -> None:
-        c = self._conn()
-        c.execute("INSERT INTO dlq(event_id, payload, reason, created_at) VALUES(?,?,?,?)",
-                  (event_id, json.dumps(payload), reason[:500], time.time()))
-        c.execute("DELETE FROM inbox WHERE seq=?", (seq,))
+        with self._tx() as c:
+            c.execute("INSERT INTO dlq(event_id, payload, reason, created_at) VALUES(?,?,?,?)",
+                      (event_id, json.dumps(payload), reason[:500], time.time()))
+            c.execute("DELETE FROM inbox WHERE seq=?", (seq,))
+
+    def checkpoint(self) -> None:
+        """PASSIVE: copies committed WAL frames without blocking readers or writers."""
+        self._conn().execute("PRAGMA wal_checkpoint(PASSIVE)")
 
     def pending_count(self) -> int:
         return self._conn().execute("SELECT COUNT(*) FROM inbox").fetchone()[0]
 
     def dlq_count(self) -> int:
         return self._conn().execute("SELECT COUNT(*) FROM dlq").fetchone()[0]
+
+    def reconcile_snapshot(self) -> tuple[set[str], set[str], dict[tuple[str, str, str], float]]:
+        """(in-flight ids, DLQ ids, aggregate totals) from ONE read transaction, so
+        an event processed mid-reconcile is never seen as both pending and billed.
+        Ids already in `events` are neither (a redriven event that later
+        succeeded is billable and must still be reconciled)."""
+        c = self._conn()
+        c.execute("BEGIN")
+        try:
+            pending = {r[0] for r in c.execute(
+                "SELECT DISTINCT event_id FROM inbox "
+                "WHERE event_id NOT IN (SELECT event_id FROM events)")}
+            dlq = {r[0] for r in c.execute(
+                "SELECT DISTINCT event_id FROM dlq "
+                "WHERE event_id NOT IN (SELECT event_id FROM events)")}
+            aggs = {(r[0], r[1], r[2]): float(r[3]) for r in c.execute(
+                "SELECT customer_id, period, metric, total_quantity FROM aggregates")}
+        finally:
+            c.execute("COMMIT")
+        return pending, dlq, aggs
 
     def oldest_pending_age_s(self) -> float:
         r = self._conn().execute("SELECT MIN(created_at) FROM inbox").fetchone()[0]
@@ -168,32 +239,29 @@ class Store:
     # ---- idempotent write (DynamoDB conditional-put analogue) ----
     def try_insert_event(self, payload: dict[str, Any], plan_version: str,
                          unit_amount: float) -> bool:
-        """True = accepted (first time); False = duplicate (no side effects)."""
-        c = self._conn()
+        """True = accepted (first time); False = duplicate (no side effects).
+        Event row and aggregate increment commit together or not at all."""
+        ts = payload["timestamp"]
+        ts = ts if isinstance(ts, str) else ts.isoformat()
+        period = ts[:7]
         try:
-            c.execute(
-                "INSERT INTO events(event_id,customer_id,product_id,metric,quantity,"
-                "ts,period,plan_version,unit_amount) VALUES(?,?,?,?,?,?,?,?,?)",
-                (payload["event_id"], payload["customer_id"], payload["product_id"],
-                 payload["metric"], float(payload["quantity"]),
-                 payload["timestamp"] if isinstance(payload["timestamp"], str)
-                 else payload["timestamp"].isoformat(),
-                 payload["timestamp"][:7] if isinstance(payload["timestamp"], str)
-                 else payload["timestamp"].strftime("%Y-%m"),
-                 plan_version, unit_amount))
+            with self._tx() as c:
+                c.execute(
+                    "INSERT INTO events(event_id,customer_id,product_id,metric,quantity,"
+                    "ts,period,plan_version,unit_amount) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (payload["event_id"], payload["customer_id"], payload["product_id"],
+                     payload["metric"], float(payload["quantity"]), ts, period,
+                     plan_version, unit_amount))
+                c.execute(
+                    "INSERT INTO aggregates(customer_id,period,metric,total_quantity,"
+                    "event_count,updated_at) VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(customer_id,period,metric) DO UPDATE SET "
+                    "total_quantity=total_quantity+excluded.total_quantity, "
+                    "event_count=event_count+1, updated_at=excluded.updated_at",
+                    (payload["customer_id"], period, payload["metric"],
+                     float(payload["quantity"]), 1, time.time()))
         except sqlite3.IntegrityError:
             return False
-        period = (payload["timestamp"][:7] if isinstance(payload["timestamp"], str)
-                  else payload["timestamp"].strftime("%Y-%m"))
-        c.execute(
-            "INSERT INTO aggregates(customer_id,period,metric,total_quantity,"
-            "event_count,updated_at) VALUES(?,?,?,?,?,?) "
-            "ON CONFLICT(customer_id,period,metric) DO UPDATE SET "
-            "total_quantity=total_quantity+excluded.total_quantity, "
-            "event_count=event_count+1, updated_at=excluded.updated_at",
-            (payload["customer_id"], period, payload["metric"],
-             float(payload["quantity"]), 1, time.time()))
-        # fix first-insert count (inserted row has count=1 already via values? ensure 1)
         return True
 
     # ---- reads ----

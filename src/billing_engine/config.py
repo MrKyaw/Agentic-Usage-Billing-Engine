@@ -17,6 +17,7 @@ class Settings:
     api_key: str = _env("BILLING_API_KEY", "dev-key-123")
     db_path: str = _env("BILLING_DB_PATH", str(REPO_ROOT / "data" / "billing.db"))
     raw_log_dir: str = _env("BILLING_RAW_LOG_DIR", str(REPO_ROOT / "data" / "raw-log"))
+    export_dir: str = _env("BILLING_EXPORT_DIR", str(REPO_ROOT / "exports"))
     plan_path: str = _env("BILLING_PLAN_PATH",
                           str(REPO_ROOT / "src" / "billing_engine" / "price_plans.json"))
     stage: str = _env("BILLING_STAGE", "local")

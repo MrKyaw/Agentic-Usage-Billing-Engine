@@ -3,13 +3,41 @@ on: {push: null, pull_request: null}
 jobs:
   test:
     runs-on: ubuntu-latest
+    env: {HYPOTHESIS_PROFILE: ci}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
-      - run: pytest -q
-      - run: bash tools/demo.sh
+      # pytest (unit/property/concurrency/e2e, 100% coverage gate) + demo + chaos + reports
+      - run: python tools/test_report.py
+      - name: Publish TEST_RESULTS.md to job summary
+        if: always()
+        run: if [ -f reports/TEST_RESULTS.md ]; then cat reports/TEST_RESULTS.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: test-reports, path: reports/}
+  perf:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # shared runners are noisy: tracked every run, never gating
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python tools/test_report.py --perf
+      - name: Publish perf results to job summary
+        if: always()
+        run: if [ -f reports/TEST_RESULTS.md ]; then cat reports/TEST_RESULTS.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: perf-reports, path: reports/}
+  compose-smoke:
+    runs-on: ubuntu-latest
+    continue-on-error: true  # containerised e2e: catches a broken Dockerfile/compose, never gating
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/compose_smoke.sh
   cdk-synth:
     runs-on: ubuntu-latest
     steps:

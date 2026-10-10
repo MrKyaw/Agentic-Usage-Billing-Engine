@@ -61,6 +61,8 @@ def process_batch(store: Store, limit: int = 50) -> dict[str, int]:
             out["dlq"] += 1
             continue
         out[process_one(store, it)] += 1
+    if items:
+        store.checkpoint()
     METRICS.set_gauge("queue_pending", store.pending_count())
     METRICS.set_gauge("dlq_depth", store.dlq_count())
     return out

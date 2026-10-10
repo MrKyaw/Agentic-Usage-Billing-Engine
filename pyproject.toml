@@ -11,11 +11,12 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "pydantic>=2.0",
-  "mcp>=1.0",
+  "mcp>=1.0,<2",  # 2.x renamed FastMCP
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio", "httpx", "locust", "ruff"]
+dev = ["pytest>=8", "pytest-asyncio", "pytest-cov>=5", "hypothesis>=6", "httpx", "locust",
+       "ruff"]
 aws = ["boto3", "aws-cdk-lib>=2.150", "constructs>=10"]
 
 [tool.setuptools.packages.find]
@@ -24,6 +25,25 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "-m 'not perf'"
+markers = [
+  "e2e: cross-process end-to-end tests (spawn uvicorn / worker / MCP stdio)",
+  "perf: load/latency tests against a live API + worker (run with -m perf)",
+  "property: Hypothesis property-based and stateful tests",
+  "concurrency: multi-thread / multi-process contention tests",
+  "req(*ids): PRD requirement(s) a test verifies, e.g. FR2 or NFR-CORRECTNESS",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+]
 
 [tool.ruff]
 line-length = 100

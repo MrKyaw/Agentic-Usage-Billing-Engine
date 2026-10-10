@@ -2,6 +2,7 @@
 # Failure injection (PRD §8 Day-2 6-8h block): duplicates, crash, out-of-order.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 export PYTHONPATH="$ROOT/src" BILLING_DB_PATH="$ROOT/data/chaos.db" BILLING_RAW_LOG_DIR="$ROOT/data/chaos-raw"
 rm -rf "$ROOT/data/chaos.db" "$ROOT/data/chaos-raw"
 python3 - <<'PY'

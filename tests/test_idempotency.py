@@ -9,6 +9,10 @@ from billing_engine.processor import drain  # noqa: E402
 from billing_engine.query import get_usage  # noqa: E402
 from billing_engine.store import Store  # noqa: E402
 
+import pytest  # noqa: E402
+
+pytestmark = pytest.mark.req("FR2", "NFR-CORRECTNESS")
+
 
 def _store(tmp_path):
     return Store(tmp_path / "b.db", tmp_path / "raw")

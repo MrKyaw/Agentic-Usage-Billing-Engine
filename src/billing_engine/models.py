@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
-from uuid import UUID
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -19,12 +18,20 @@ class UsageEvent(BaseModel):
     timestamp: datetime = Field(..., description="Event time (not arrival time); ISO-8601")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("event_id")
+    @field_validator("event_id", "customer_id", "product_id", "metric")
     @classmethod
-    def _event_id_shape(cls, v: str) -> str:
+    def _identifier_shape(cls, v: str) -> str:
+        # padding must not create a second customer/metric bucket
         v = v.strip()
         if not v:
-            raise ValueError("event_id must be non-empty")
+            raise ValueError("must be non-empty")
+        return v
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def _reject_bool_quantity(cls, v: Any) -> Any:
+        if isinstance(v, bool):  # JSON true/false would otherwise coerce to 1.0/0.0
+            raise ValueError("quantity must be a number, not a boolean")
         return v
 
     @field_validator("timestamp", mode="before")
@@ -62,8 +69,3 @@ class BatchIngestRequest(BaseModel):
 def coerce_event(payload: dict[str, Any]) -> UsageEvent:
     """Validate one raw payload; raises pydantic.ValidationError on 4xx-worthy input."""
     return UsageEvent.model_validate(payload)
-
-
-def _unused_uuid_import_guard(v: str) -> str:  # keeps UUID import meaningful for docs
-    UUID(v)
-    return v

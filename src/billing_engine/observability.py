@@ -17,7 +17,7 @@ from typing import Any
 def jlog(level: str, msg: str, **fields: Any) -> None:
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "level": level, "msg": msg, **fields}
-    sys.stdout.write(json.dumps(rec) + "\n")
+    sys.stdout.write(json.dumps(rec, default=str) + "\n")
     sys.stdout.flush()
 
 
