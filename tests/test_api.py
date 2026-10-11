@@ -134,3 +134,14 @@ def test_ops_metrics(c):
     assert r.status_code == 200
     body = r.json()
     assert "counters" in body and body["queue"]["dlq"] == 0 and body["alarms"] == []
+
+
+def test_ui_console_self_contained(c):
+    """The /ui test console must load with zero external dependencies
+    (it exists precisely for networks where the /docs CDN is blocked)."""
+    r = c.get("/ui")
+    assert r.status_code == 200
+    html = r.text
+    assert "usage-events" in html and "reconcile" in html
+    assert "https://" not in html
+    assert "X-API-Key" in html

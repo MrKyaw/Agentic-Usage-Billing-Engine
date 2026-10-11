@@ -8,7 +8,7 @@ AI agents answer billing questions over the same data.
 
 > **Status: v0.1 proof of concept.**
 > - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`)
->   or in Docker (`make up`). 206 automated tests, 100% line and branch coverage,
+>   or in Docker (`make up`). 207 automated tests, 100% line and branch coverage,
 >   performance targets measured against live processes, containerised end-to-end smoke test.
 > - **Blueprint only:** the AWS deployment in `infra/cdk/` describes the target
 >   architecture but is **not yet deployable**; see [AWS deployment](#aws-deployment-blueprint).
@@ -196,7 +196,10 @@ over `.env`, so both containers always share one database.
 ## API reference
 
 Interactive documentation: <http://localhost:8000/docs> (Swagger UI) and
-<http://localhost:8000/openapi.json>.
+<http://localhost:8000/openapi.json>. If `/docs` renders blank, your network is
+blocking its CDN assets — use the dependency-free test console at
+<http://localhost:8000/ui> instead: same operations (ingest, batch, usage, bill,
+close, metrics, reconcile), no external requests.
 
 **Authentication.** Every `/v1` route requires the header `X-API-Key: dev-key-123`. In
 `/docs`, click **Authorize**, enter the key once, and every "Try it out" request sends
@@ -205,6 +208,7 @@ bar return `401` by design.
 
 | Method | Path | Auth | Success | Errors |
 |---|---|---|---|---|
+| GET | `/ui` | none | 200 self-contained test console (no CDN) | - |
 | GET | `/health` | none | 200 `{"ok": true, "stage", "version"}` | - |
 | POST | `/v1/usage-events` | key | 202 `{"event_id", "status": "accepted"}` | 400 invalid event, 401 |
 | POST | `/v1/usage-events:batch` | key | 202 `{"accepted", "rejected", "accepted_count", "rejected_count"}` | 400 empty or more than 100 events, 401, 422 malformed body |
@@ -249,7 +253,7 @@ K="X-API-Key: dev-key-123"
 |---|---|---|
 | 1 | <http://localhost:8000/health> | `{"ok":true,"stage":"local","version":"0.1.0"}` |
 | 2 | <http://localhost:8000/openapi.json> | The OpenAPI 3.1 schema, including the `APIKeyHeader` security scheme |
-| 3 | <http://localhost:8000/docs> | Swagger UI. Click **Authorize**, enter `dev-key-123`, click **Authorize**, then **Close**. The lock icons on the `/v1` routes close. |
+| 3 | <http://localhost:8000/docs> | Swagger UI. Click **Authorize**, enter `dev-key-123`, click **Authorize**, then **Close**. The lock icons on the `/v1` routes close. If the page is blank (CDN blocked), use <http://localhost:8000/ui> — same operations, no setup needed beyond the API-key field. |
 
 For each following step: expand the endpoint in `/docs`, click **Try it out**, enter the
 values shown, and click **Execute**.
@@ -491,14 +495,14 @@ and is it reconciled?"
 - **CI** (`.github/workflows/ci.yml`): the test and report job is the gate;
   performance, compose smoke and CDK jobs are non-blocking.
 
-**Performance** (latest `make report-perf`, Apple Silicon laptop, 8 cores, API and
-worker as separate local processes):
+**Performance** (measured 2026-10-11, Apple Silicon laptop, API + 2 workers as
+separate local processes, 5,000 events per scenario):
 
 | Scenario | Target | Measured | Result |
 |---|---|---|---|
-| Sustained throughput (closed loop, 5,000 events) | >= 500 events/s | 677.5 events/s, 0 errors, all 5,000 billed, reconcile match | PASS |
-| Ingest latency at 500 events/s (open loop) | p99 < 200 ms | p50 5.2 ms, p95 31.9 ms, p99 109.4 ms | PASS |
-| Burst: 1,000 events as 10 batches of 100 | <= 1 s | 0.048 s | PASS |
+| Sustained throughput (closed loop, 5,000 events) | >= 500 events/s | 612.7 events/s, 0 errors, all 5,000 billed, reconcile match | PASS |
+| Ingest latency at 500 events/s (open loop) | p99 < 200 ms | p50 4.8 ms, p95 11.0 ms, p99 72.3 ms | PASS |
+| Burst: 1,000 events as 10 batches of 100 | <= 1 s | 0.04 s | PASS |
 | Locust: 50 users for 20 s, mixed single, batch and bill reads | 0 failures | 15,889 requests, 0 failures, ~2,354 events/s ingested, reconcile match over 46,480 events | PASS |
 
 The Locust run deliberately saturates the stack at roughly 4.7 times the 500 events/s
@@ -615,6 +619,7 @@ CI synth step that fails on error.
 | Symptom | Cause and fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'billing_engine'` | Running Python directly without `src/` on the path. Use the `make` targets, or `export PYTHONPATH=$PWD/src`. |
+| `/docs` renders blank | Its JS/CSS come from a CDN. Use `/ui`, or allow `cdn.jsdelivr.net`. |
 | Browser shows `ERR_CONNECTION_REFUSED` | Nothing is running on that port. Start `make up` (or `make api` + `make worker`) and leave it running; `make compose-smoke` uses its own port and stops itself. |
 | `/v1/...` in the browser returns `401 invalid API key` | Expected: the key must be sent as a header. Use **Authorize** in `/docs`, or `curl -H "X-API-Key: dev-key-123"`. |
 | `port is already allocated` / address in use | Another process uses 8000. `make up PORT=9000` or `make api PORT=9000`. |
@@ -637,7 +642,8 @@ From [ROADMAP.md](ROADMAP.md):
   with automatic rollback, invoicing, tax and currency, and a cost-optimisation pass.
 
 **Non-goals for v0.x:** real payments, tax or currency; multi-region; authentication
-beyond API keys; a UI; ERP integration beyond the CSV export; legacy migration.
+beyond API keys; a product UI (only the dependency-free `/ui` test console);
+ERP integration beyond the CSV export; legacy migration.
 Idempotency, reconciliation and observability were never cut.
 
 ## Documentation index
