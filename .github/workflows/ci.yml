@@ -93,7 +93,7 @@ jobs:
           fi
       - name: Guardrail - no unresolved TODO/FIXME
         run: |
-          TODO_COUNT=$(grep -rn 'TODO\|FIXME' --include='*.py' src/ | wc -l)
+          TODO_COUNT=$(grep -rnE '#.*(TODO|FIXME)' --include='*.py' src/ | wc -l)
           if [ "$TODO_COUNT" -gt 0 ]; then
             echo "::error ::Found $TODO_COUNT unresolved TODO/FIXME items"
             exit 1

@@ -9,9 +9,10 @@ AI agents answer billing questions over the same data.
 > **Status: v0.1 proof of concept.**
 > - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`),
 >   in Docker (`make up`), and as a **Kafka + Flink streaming stack**
->   (`make stream-up`; proven by `make stream-smoke`). 280 automated tests, 100% line
->   and branch coverage, a 10-eval correctness suite, performance targets measured
->   against live processes, and containerised end-to-end smoke tests.
+>   (`make stream-up`; proven by `make stream-smoke`). 280 gating tests plus 3 opt-in
+>   perf tests, 100% line and branch coverage, a 10-eval correctness suite,
+>   performance targets measured against live processes, and containerised
+>   end-to-end smoke tests.
 > - **Blueprint only:** the AWS deployment in `infra/cdk/` describes the target
 >   architecture but is **not yet deployable**; the local Kafka/Flink runtime maps to
 >   Amazon MSK + Managed Service for Apache Flink. See

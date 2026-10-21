@@ -9,10 +9,10 @@ Agent-output verification: gates, risk tiers, signed verdicts, review capacity.
 | Test | Status | Kind | Requirements | Time (s) | What it verifies |
 |---|---|---|---|---|---|
 | `test_classify_paths_by_highest_risk_file` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Classify paths by highest risk file |
-| `test_required_reviewers_matrix` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.002 | Required reviewers matrix |
+| `test_required_reviewers_matrix` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Required reviewers matrix |
 | `test_green_verdict_passes_every_gate_and_requires_two_humans` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Green verdict passes every gate and requires two humans |
 | `test_each_failing_fact_blocks_the_verdict` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Each failing fact blocks the verdict |
-| `test_signed_verdict_cannot_be_tampered_with` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.002 | Signed verdict cannot be tampered with |
+| `test_signed_verdict_cannot_be_tampered_with` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Signed verdict cannot be tampered with |
 | `test_deployment_requires_green_gates_and_a_valid_signature` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Deployment requires green gates and a valid signature |
 | `test_review_capacity_math_answers_whether_humans_can_absorb_agent_prs` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.002 | Review capacity math answers whether humans can absorb agent prs |
-| `test_verdict_is_immutable_and_failed_is_a_tuple` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.001 | Verdict is immutable and failed is a tuple |
+| `test_verdict_is_immutable_and_failed_is_a_tuple` | PASSED | unit | NFR-GOVERNANCE, NFR-CORRECTNESS | 0.000 | Verdict is immutable and failed is a tuple |
