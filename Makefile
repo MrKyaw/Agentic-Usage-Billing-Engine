@@ -1,5 +1,5 @@
 .PHONY: test eval e2e perf report report-perf demo chaos api worker mcp reconcile lint load smoke \
-	up down docker-reset logs compose-smoke
+	up down docker-reset logs compose-smoke stream-up stream-down stream-smoke stream-logs
 
 # the package lives in src/ and is not pip-installed
 export PYTHONPATH := $(CURDIR)/src$(if $(PYTHONPATH),:$(PYTHONPATH))
@@ -66,3 +66,17 @@ logs:
 
 compose-smoke:
 	bash tools/compose_smoke.sh
+
+# Kafka + Flink local runtime (infra/streaming). Kafka is the queue in this mode;
+# the raw log remains the durable source of truth.
+stream-up:
+	docker compose -f infra/streaming/docker-compose.yml up -d --build
+
+stream-down:
+	docker compose -f infra/streaming/docker-compose.yml down -v --remove-orphans
+
+stream-smoke:
+	bash tools/kafka_smoke.sh
+
+stream-logs:
+	docker compose -f infra/streaming/docker-compose.yml logs -f

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from billing_engine.config import SETTINGS
 from billing_engine.ingest import IngestRejected, ingest_batch, ingest_one
+from billing_engine.kafka_transport import get_event_bus
 from billing_engine.observability import METRICS
 from billing_engine.partitioning import ledger_integrity
 from billing_engine.period_close import close_period
@@ -49,8 +50,10 @@ def health() -> dict[str, Any]:
 def post_event(body: dict[str, Any], sync: bool = False,
                _k: None = Depends(require_key)) -> dict[str, Any]:
     store = get_store()
+    bus = get_event_bus()
     try:
-        res = ingest_one(store, body)
+        res = ingest_one(store, body, publisher=bus,
+                         enqueue=not bus.config.enabled)
     except IngestRejected as e:
         raise HTTPException(status_code=400, detail=str(e)[:500])
     if sync:
@@ -66,8 +69,10 @@ def post_batch(body: BatchBody, sync: bool = False,
     if not 1 <= len(body.events) <= SETTINGS.max_batch:
         raise HTTPException(status_code=400,
                             detail=f"batch must contain 1..{SETTINGS.max_batch} events")
+    bus = get_event_bus()
     try:
-        res = ingest_batch(store, body.events)
+        res = ingest_batch(store, body.events, publisher=bus,
+                           enqueue=not bus.config.enabled)
     except IngestRejected as e:
         raise HTTPException(status_code=400, detail=str(e)[:500])
     if sync:

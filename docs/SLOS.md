@@ -7,7 +7,7 @@
 | Event-to-aggregate p95 | < 5 s | < 10 s | `event_to_aggregate_ms` |
 | Correctness: double-count | 0 under 10% dupes | 0 (error budget burns on any) | reconcile job |
 | Correctness: loss | 0 after consumer kill | 0 | reconcile + DLQ=0 |
-| Freshness: queue age | alarm > 30 s | alarm > 60 s, page > 5 min | SQS age metric |
+| Freshness: queue age | alarm > 30 s | alarm > 60 s, page > 5 min | SQS age metric or Kafka consumer lag |
 | Agent answers | 5/5 scripted via MCP | 95% eval set | `agent_demo` eval |
 
 Error budget policy (pilot): correctness burn = freeze deploys + incident;

@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio", "pytest-cov>=5", "hypothesis>=6", "httpx", "locust",
        "ruff"]
+streaming = ["confluent-kafka>=2.4"]
 aws = ["boto3", "aws-cdk-lib>=2.150", "constructs>=10"]
 
 [tool.setuptools.packages.find]

@@ -59,6 +59,38 @@ def process_one(store: Store, item: dict[str, Any], max_retries: int = 5) -> str
     return "accepted"
 
 
+def process_event(store: Store, payload: dict[str, Any]) -> tuple[str, str | None]:
+    """Process one event from a stream (Kafka) where there is no inbox row to ack.
+
+    Returns ``(status, reason)``: ``accepted``/``duplicate`` with ``None``, or
+    ``dlq`` with the unratable reason. The caller publishes poison messages to
+    the Kafka DLQ topic; the ledger insert remains the idempotency guard.
+    """
+    t0 = time.perf_counter()
+    event_id = payload.get("event_id", "?")
+    book = get_book()
+    try:
+        unit_amount, plan_version = book.rate_unit(payload["metric"],
+                                                   float(payload["quantity"]))
+    except (RatingError, KeyError, TypeError, ValueError) as e:
+        METRICS.inc("processor_dlq_total")
+        METRICS.inc("processor_error_total")
+        jlog("ERROR", "processor_dlq", event_id=event_id, reason=str(e)[:200])
+        return "dlq", f"unratable: {e}"
+    ok = store.try_insert_event(payload, plan_version, unit_amount)
+    ms = (time.perf_counter() - t0) * 1000
+    METRICS.observe_latency("event_to_aggregate_ms", ms)
+    if not ok:
+        METRICS.inc("processor_duplicate_total")
+        jlog("INFO", "processor_duplicate", event_id=event_id)
+        return "duplicate", None
+    METRICS.inc("processor_accepted_total")
+    jlog("INFO", "processor_accepted", event_id=event_id,
+         customer_id=payload.get("customer_id"), amount=unit_amount,
+         latency_ms=round(ms, 2))
+    return "accepted", None
+
+
 def process_batch(store: Store, limit: int = 50) -> dict[str, int]:
     from billing_engine.config import SETTINGS
     items = store.claim_batch(limit=limit)

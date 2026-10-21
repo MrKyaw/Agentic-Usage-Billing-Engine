@@ -1,0 +1,151 @@
+# Kafka + Flink runtime for the billing engine.
+#
+# Local deployment:   make stream-up
+# End-to-end smoke:   make stream-smoke
+# Flink UI:           http://localhost:8081
+# Kafka (host):       localhost:29092
+#
+# Kafka is the queue when BILLING_KAFKA_BOOTSTRAP is set: the API writes the
+# durable raw log, publishes to usage-events, and skips the SQLite inbox. The
+# kafka-worker consumes the raw topic and applies the same idempotent processor.
+# Flink maintains the deduped read model and 10-second operational aggregates.
+name: billing-streaming
+
+x-app: &app
+  image: billing-engine:local
+  pull_policy: never
+  environment:
+    BILLING_API_KEY: ${BILLING_API_KEY:-dev-key-123}
+    BILLING_DB_PATH: /data/billing.db
+    BILLING_RAW_LOG_DIR: /data/raw-log
+    BILLING_EXPORT_DIR: /data/exports
+    BILLING_PLAN_PATH: /app/src/billing_engine/price_plans.json
+  volumes:
+    - billing-data:/data
+  restart: unless-stopped
+
+x-flink: &flink
+  image: billing-flink:local
+  pull_policy: never
+  environment:
+    FLINK_PROPERTIES: |
+      jobmanager.rpc.address: jobmanager
+      rest.address: jobmanager
+      rest.port: 8081
+      taskmanager.numberOfTaskSlots: 4
+      parallelism.default: 2
+      state.backend: hashmap
+      execution.checkpointing.interval: 10s
+  volumes:
+    - flink-checkpoints:/opt/flink/checkpoints
+
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 20
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on:
+      kafka: {condition: service_healthy}
+    entrypoint: ["/bin/bash", "/topics/create-topics.sh"]
+    volumes:
+      - ./kafka:/topics:ro
+
+  jobmanager:
+    <<: *flink
+    build:
+      context: ./flink
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+
+  taskmanager:
+    <<: *flink
+    command: taskmanager
+    depends_on:
+      jobmanager: {condition: service_started}
+      kafka-init: {condition: service_completed_successfully}
+
+  flink-submit:
+    <<: *flink
+    command: >
+      bash -c "for i in $$(seq 1 60); do curl -fsS http://jobmanager:8081/overview >/dev/null 2>&1 && break; sleep 2; done;
+      /opt/flink/bin/sql-client.sh -Drest.address=jobmanager -Drest.port=8081 -Dexecution.target=remote -Dexecution.attached=false -f /opt/flink/jobs/window_aggregates.sql"
+    volumes:
+      - ./flink/jobs:/opt/flink/jobs:ro
+      - flink-checkpoints:/opt/flink/checkpoints
+    depends_on:
+      jobmanager: {condition: service_started}
+      taskmanager: {condition: service_started}
+      kafka-init: {condition: service_completed_successfully}
+    restart: "no"
+
+  api:
+    <<: *app
+    build:
+      context: ../..
+    ports:
+      - "${STREAM_PORT:-18000}:8000"
+    environment:
+      BILLING_API_KEY: ${BILLING_API_KEY:-dev-key-123}
+      BILLING_DB_PATH: /data/billing.db
+      BILLING_RAW_LOG_DIR: /data/raw-log
+      BILLING_EXPORT_DIR: /data/exports
+      BILLING_PLAN_PATH: /app/src/billing_engine/price_plans.json
+      BILLING_KAFKA_BOOTSTRAP: kafka:9092
+      BILLING_KAFKA_TOPIC: usage-events
+      BILLING_KAFKA_DLQ_TOPIC: usage-events-dlq
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+
+  kafka-worker:
+    <<: *app
+    command: ["python", "-m", "billing_engine.kafka_worker"]
+    environment:
+      BILLING_API_KEY: ${BILLING_API_KEY:-dev-key-123}
+      BILLING_DB_PATH: /data/billing.db
+      BILLING_RAW_LOG_DIR: /data/raw-log
+      BILLING_EXPORT_DIR: /data/exports
+      BILLING_PLAN_PATH: /app/src/billing_engine/price_plans.json
+      BILLING_KAFKA_BOOTSTRAP: kafka:9092
+      # The worker consumes the raw topic: the ledger's conditional insert is the
+      # authoritative dedupe. Flink's deduped topic is an analytics read model.
+      BILLING_KAFKA_TOPIC: usage-events
+      BILLING_KAFKA_GROUP: billing-worker
+      BILLING_KAFKA_OFFSET_RESET: earliest
+    depends_on:
+      kafka-init: {condition: service_completed_successfully}
+      api: {condition: service_healthy}
+
+volumes:
+  billing-data:
+  flink-checkpoints:

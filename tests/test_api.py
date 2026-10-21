@@ -94,7 +94,7 @@ def test_batch_ingest_rejected_maps_to_400(c, monkeypatch):
     from billing_engine import api as api_mod
     from billing_engine.ingest import IngestRejected
 
-    def reject(_store, _events):
+    def reject(_store, _events, **_kwargs):
         raise IngestRejected("nope")
     monkeypatch.setattr(api_mod, "ingest_batch", reject)
     r = c.post("/v1/usage-events:batch", headers=H, json={"events": [make_event("x")]})

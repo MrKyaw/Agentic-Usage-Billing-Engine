@@ -56,6 +56,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash tools/compose_smoke.sh
+  streaming-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true  # Kafka + Flink e2e: catches a broken streaming runtime, never gating
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kafka + Flink end-to-end smoke
+        run: bash tools/kafka_smoke.sh
+      - name: Streaming logs on failure
+        if: failure()
+        run: docker compose -f infra/streaming/docker-compose.yml logs --no-color --tail 200 || true
   cdk-synth:
     runs-on: ubuntu-latest
     steps:

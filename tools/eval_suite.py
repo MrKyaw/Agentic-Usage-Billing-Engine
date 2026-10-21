@@ -193,14 +193,14 @@ def eval_data_lake() -> None:
 
 def eval_governance() -> None:
     green = evaluate("eval", "agent", ["src/billing_engine/rating.py"],
-                     tests_passed=254, tests_failed=0, coverage_pct=100.0,
+                     tests_passed=280, tests_failed=0, coverage_pct=100.0,
                      reconcile_match=True, todo_count=0, lint_errors=0)
     assert green.passed is True and green.reviewers_required == 2
     decision = deployment_allowed(green, sign(green, SECRET), SECRET)
     assert decision.allowed is True, decision
 
     red = evaluate("eval", "agent", ["src/billing_engine/store.py"],
-                   tests_passed=254, tests_failed=1, coverage_pct=99.0,
+                   tests_passed=280, tests_failed=1, coverage_pct=99.0,
                    reconcile_match=False, todo_count=1, lint_errors=2)
     blocked = deployment_allowed(red, sign(red, SECRET), SECRET)
     assert blocked.allowed is False and blocked.reasons

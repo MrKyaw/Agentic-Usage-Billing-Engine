@@ -8,9 +8,9 @@ Failure modes from RUNBOOK: poison messages, retry exhaustion, redelivery, alarm
 
 | Test | Status | Kind | Requirements | Time (s) | What it verifies |
 |---|---|---|---|---|---|
-| `test_unknown_metric_goes_to_dlq` | PASSED | unit | FR2 | 0.005 | Unknown metric goes to dlq |
+| `test_unknown_metric_goes_to_dlq` | PASSED | unit | FR2 | 0.006 | Unknown metric goes to dlq |
 | `test_max_retries_exceeded_goes_to_dlq` | PASSED | unit | FR2 | 0.006 | Max retries exceeded goes to dlq |
-| `test_visibility_timeout_redelivery` | PASSED | unit | FR2, NFR-CORRECTNESS | 0.054 | Visibility timeout redelivery |
+| `test_visibility_timeout_redelivery` | PASSED | unit | FR2, NFR-CORRECTNESS | 0.053 | Visibility timeout redelivery |
 | `test_crash_mid_write_never_loses_or_double_counts[INSERT INTO aggregates]` | PASSED | unit | FR2, NFR-CORRECTNESS | 0.006 | Kill the worker between the event insert and aggregate update (or the ack). |
 | `test_crash_mid_write_never_loses_or_double_counts[DELETE FROM inbox]` | PASSED | unit | FR2, NFR-CORRECTNESS | 0.006 | Kill the worker between the event insert and aggregate update (or the ack). |
 | `test_crash_mid_dlq_move_leaves_single_dlq_row` | PASSED | unit | FR2 | 0.005 | Crash mid dlq move leaves single dlq row |
@@ -21,8 +21,8 @@ Failure modes from RUNBOOK: poison messages, retry exhaustion, redelivery, alarm
 | `test_get_store_with_explicit_paths_bypasses_singleton` | PASSED | unit | FR2 | 0.002 | Get store with explicit paths bypasses singleton |
 | `test_reconcile_detects_tampered_aggregate` | PASSED | unit | FR5 | 0.006 | Reconcile detects tampered aggregate |
 | `test_reconcile_dedupes_redelivered_raw_events_and_filters_customer` | PASSED | unit | FR5 | 0.007 | Reconcile dedupes redelivered raw events and filters customer |
-| `test_non_utc_timestamp_buckets_by_utc_period` | PASSED | unit | FR2 | 0.007 | Non utc timestamp buckets by utc period |
-| `test_ingest_batch_reports_rejected_and_enforces_limit` | PASSED | unit | FR1 | 0.008 | Ingest batch reports rejected and enforces limit |
+| `test_non_utc_timestamp_buckets_by_utc_period` | PASSED | unit | FR2 | 0.006 | Non utc timestamp buckets by utc period |
+| `test_ingest_batch_reports_rejected_and_enforces_limit` | PASSED | unit | FR1 | 0.007 | Ingest batch reports rejected and enforces limit |
 | `test_alarms_fire_on_dlq_queue_age_and_error_rate` | PASSED | unit | FR6 | 0.001 | Alarms fire on dlq queue age and error rate |
 | `test_error_rate_alarm_needs_minimum_volume` | PASSED | unit | FR6 | 0.001 | Error rate alarm needs minimum volume |
 | `test_metrics_snapshot_percentiles_and_gauges` | PASSED | unit | FR6 | 0.001 | Metrics snapshot percentiles and gauges |

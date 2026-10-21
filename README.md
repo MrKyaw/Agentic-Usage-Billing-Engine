@@ -7,12 +7,15 @@ reconciled at any time against an immutable raw event log. Read-only **MCP tools
 AI agents answer billing questions over the same data.
 
 > **Status: v0.1 proof of concept.**
-> - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`)
->   or in Docker (`make up`). 254 automated tests, 100% line and branch coverage,
->   a 10-eval correctness suite, performance targets measured against live processes,
->   containerised end-to-end smoke test.
+> - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`),
+>   in Docker (`make up`), and as a **Kafka + Flink streaming stack**
+>   (`make stream-up`; proven by `make stream-smoke`). 280 automated tests, 100% line
+>   and branch coverage, a 10-eval correctness suite, performance targets measured
+>   against live processes, and containerised end-to-end smoke tests.
 > - **Blueprint only:** the AWS deployment in `infra/cdk/` describes the target
->   architecture but is **not yet deployable**; see [AWS deployment](#aws-deployment-blueprint).
+>   architecture but is **not yet deployable**; the local Kafka/Flink runtime maps to
+>   Amazon MSK + Managed Service for Apache Flink. See
+>   [AWS deployment](#aws-deployment-blueprint).
 
 ## Contents
 
@@ -64,6 +67,12 @@ AI agents answer billing questions over the same data.
   and SHA-256 checksum chains that trace and repair broken order. Crash-safe
   ingestion (transactional raw-log + inbox insert) and DLQ redrive guarantee zero
   lost events. See [docs/STREAMING.md](docs/STREAMING.md).
+- **Runnable Kafka + Flink runtime.** `infra/streaming/` starts Kafka 3.8 (KRaft,
+  20 partitions), Flink 1.19 SQL jobs, the API and a `kafka-worker` with Docker
+  Compose. Kafka becomes the queue; Flink maintains a deduped read model and
+  10-second operational aggregates. `make stream-smoke` proves bill correctness,
+  reconciliation, dedupe and aggregation end to end. See
+  [infra/streaming/README.md](infra/streaming/README.md).
 - **Agentic Workflows & MCP.** Integrated coding agents and Model Context Protocol
   (MCP) tooling embedded directly into the developer and validation lifecycle.
   `agentic_decision` combines usage, rated bills and reconciliation status into a
@@ -86,8 +95,14 @@ flowchart LR
     api -->|"validate, then one transaction"| rawlog[(Raw event log JSONL)]
     api --> inbox[(Inbox queue)]
     inbox --> worker[Worker]
-    worker -->|"rate + conditional insert on event_id"| store[(Events, rated records, aggregates)]
+    api -.->|"streaming mode: publish"| kafka[(Kafka usage-events)]
+    kafka --> kworker[kafka-worker]
+    kworker -->|"rate + conditional insert on event_id"| store[(Events, rated records, aggregates)]
+    kafka --> flink[Flink SQL]
+    flink --> readmodels[(Deduped topic + window aggregates)]
+    worker -->|"rate + conditional insert on event_id"| store
     worker -->|"unratable or retries exhausted"| dlq[(Dead-letter queue)]
+    kworker -->|"unratable or retries exhausted"| dlq
     store --> query[Usage and bill queries]
     store --> close[Period close and CSV export]
     rawlog --> recon[Reconciliation]
@@ -95,12 +110,16 @@ flowchart LR
     store --> mcp[MCP tools for agents]
 ```
 
-**Flow.** Ingest validates each event and, in a single transaction, appends it to the
-raw log and enqueues it, then returns `202 Accepted`. Ingest never rates or aggregates,
-which keeps it fast. The worker claims batches from the queue, rates each event, and
-inserts it only if its `event_id` has not been seen; duplicates are acknowledged and
-dropped, and events that cannot be rated go to the DLQ. Bills are computed from the
-aggregates; reconciliation replays the raw log and must match them exactly.
+**Flow.** Ingest validates each event and appends it to the raw log. In the default
+local mode it also enqueues the event in SQLite in the same transaction; in streaming
+mode it publishes to Kafka and skips the inbox. It returns `202 Accepted` either way,
+so ingest stays fast and a broker failure never loses an event. The SQLite worker or
+`kafka-worker` rates each event and inserts it only if its `event_id` has not been
+seen; duplicates are acknowledged and dropped, and events that cannot be rated go to
+the DLQ. Flink maintains a deduped analytics read model and 10-second operational
+aggregates from the Kafka topic; invoice totals still come from the ledger. Bills are
+computed from the aggregates; reconciliation replays the raw log and must match them
+exactly.
 
 **Local vs. target AWS mapping**
 
@@ -108,8 +127,10 @@ aggregates; reconciliation replays the raw log and must match them exactly.
 |---|---|---|
 | HTTP ingress and auth | FastAPI + `X-API-Key` header | API Gateway REST + usage-plan API keys |
 | Ingest | `ingest.py` in the API process | Ingest Lambda |
-| Queue and DLQ | SQLite inbox and `dlq` tables | SQS standard queue + DLQ (5 receives) |
-| Processing | `worker.py` polling loop | Processor Lambda (SQS event source, batch 50) |
+| Queue and DLQ | SQLite inbox/DLQ (default) or Kafka `usage-events`/`usage-events-dlq` (streaming) | SQS standard queue + DLQ (5 receives) |
+| Processing | `worker.py` polling loop or `kafka_worker.py` | Processor Lambda (SQS event source, batch 50) |
+| Streaming transport | Kafka 3.8 KRaft, 20 partitions, key `customer_id` | Amazon MSK (KRaft), 3 AZs, RF 3 |
+| Streaming analytics | Flink 1.19 SQL: dedupe + 10 s aggregates | Amazon Managed Service for Apache Flink |
 | Event, rated and aggregate store | SQLite (WAL) | DynamoDB tables |
 | Immutable raw log | JSONL files | S3 bucket with lifecycle rules |
 | Metrics and alarms | In-process counters, `/v1/ops/metrics` | CloudWatch metrics and alarms |
@@ -129,6 +150,9 @@ aggregates; reconciliation replays the raw log and must match them exactly.
    correct period.
 5. **Thin synchronous ingest, asynchronous processing**: the queue absorbs bursts and
    keeps ingest latency low.
+6. **Kafka is a transport, not the billing authority**: the raw log is durable before
+   publish, and the ledger dedupes at-least-once delivery. Flink topics are read
+   models, not invoice inputs.
 
 ## Domain model
 
@@ -174,7 +198,8 @@ auditability; the worker log shows that estimate, not the final bill.
 
 - **Python 3.10+** (3.12 is what CI and the test reports use) and `pip`.
 - **GNU make** (the macOS system make 3.81 works).
-- **Docker Desktop** with Compose v2.24+ (optional, for the containerised stack).
+- **Docker Desktop** with Compose v2.24+ (optional, for the containerised stack and
+  the Kafka + Flink runtime; allocate at least ~4 GB to Docker).
 - `curl` for the command-line examples.
 
 ## Quick start
@@ -193,9 +218,11 @@ target.
 | **A. Docker** | `make up` | Builds the image, starts API + worker, waits until healthy. Stop with `make down`. |
 | **B. Local processes** | `make api` (terminal 1), `make worker` (terminal 2) | Data in `./data`, CSV exports in `./exports`. Stop with Ctrl+C. |
 | **C. Tests only** | `make test` | No server needed. |
+| **D. Kafka + Flink** | `make stream-up`, then `make stream-smoke` | Real Kafka (KRaft) + Flink SQL + API + `kafka-worker`. API on <http://localhost:18000>, Flink UI on <http://localhost:8081>, Kafka on `localhost:29092`. Stop with `make stream-down`. |
 
 Either A or B serves the API at <http://localhost:8000>. Use `make up PORT=9000` or
-`make api PORT=9000` if port 8000 is taken.
+`make api PORT=9000` if port 8000 is taken. Option D uses its own project/ports and
+does not touch the default SQLite-mode stack.
 
 ## Configuration
 
@@ -213,9 +240,17 @@ All settings are environment variables (see `src/billing_engine/config.py`).
 | `LOG_LEVEL` | `INFO` | `INFO` | Reserved; not applied yet |
 | `PORT` | `8000` | `8000` | Host port for `make api`, `make up`, `make load` |
 | `DATA_DIR` | - | `./data` | Host folder whose `exports/` subfolder receives CSVs |
+| `BILLING_KAFKA_BOOTSTRAP` | empty (disabled) | `kafka:9092` in `make stream-up` | Non-empty switches ingest to Kafka: publish + raw log, no SQLite inbox |
+| `BILLING_KAFKA_TOPIC` | `usage-events` | same | Topic the API publishes to and the worker consumes |
+| `BILLING_KAFKA_DLQ_TOPIC` | `usage-events-dlq` | same | Topic for poison/non-retryable events |
+| `BILLING_KAFKA_GROUP` | `billing-worker` | same | Consumer group for `kafka-worker` |
+| `BILLING_KAFKA_OFFSET_RESET` | `earliest` | `earliest` | Where a new consumer group starts |
+| `BILLING_KAFKA_PROPERTIES` | `{}` | `{}` | Extra `confluent-kafka` client properties as JSON |
 
 In Docker, the database paths are fixed in `docker-compose.yml` and take precedence
-over `.env`, so both containers always share one database.
+over `.env`, so both containers always share one database. Kafka is only enabled when
+`BILLING_KAFKA_BOOTSTRAP` is set; the default `make up` and local modes keep the
+SQLite inbox.
 
 ## API reference
 
@@ -245,7 +280,9 @@ bar return `401` by design.
 
 Batch requests are validated per event: valid events are accepted and invalid ones are
 listed in `rejected` (partial accept). Append `?sync=true` to either ingest route to
-process the queue inline before responding; tests and demos use this for determinism.
+process the queue inline before responding in the default SQLite mode; in Kafka mode
+the `kafka-worker` consumes asynchronously. Tests and demos use `sync=true` for
+determinism.
 
 ## End-to-end test walkthrough
 
@@ -508,8 +545,8 @@ and is it reconciled?"
 ## Streaming, partitions and ordering
 
 Kafka guarantees order **within** a partition, not across them. The repo
-implements the semantics in `billing_engine.partitioning` (broker-free and
-tested), so the same design moves to Kafka/Kinesis unchanged:
+implements the semantics in `billing_engine.partitioning` and deploys them in a
+runnable Kafka + Flink stack under `infra/streaming/`:
 
 - `jump_hash` + `Partitioner` — one owner per key; scaling 20 → 40 moves ~50% of
   keys (unavoidable when doubling buckets) but never splits a key.
@@ -523,7 +560,18 @@ tested), so the same design moves to Kafka/Kinesis unchanged:
   locate the exact broken record and rebuild a verifiable order.
 - `GET /v1/ops/ledger-integrity` — content digest and duplicate count.
 
-Details and the repair runbook: [docs/STREAMING.md](docs/STREAMING.md).
+**Streaming mode (implemented):** `make stream-up` starts Kafka 3.8 (KRaft, 20
+partitions), Flink 1.19 SQL jobs, the API and `kafka-worker` with Docker Compose.
+The API writes the raw log, publishes to `usage-events`, and skips the SQLite
+inbox; `kafka-worker` consumes the topic and the ledger's conditional insert
+dedupes. Flink writes a compacted `usage-events-deduped` read model and
+10-second operational aggregates to `usage-window-aggregates`. `make stream-smoke`
+proves the whole path (bill, reconciliation, dedupe and aggregate) in an isolated
+Compose project. The unit suite (`tests/test_kafka.py`) uses injected fake clients,
+so it needs no broker.
+
+Details, ports, topics and the repair runbook: [docs/STREAMING.md](docs/STREAMING.md).
+Runtime: [infra/streaming/README.md](infra/streaming/README.md).
 
 ## Data lake
 
@@ -630,6 +678,10 @@ responses are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 | `make docker-reset` | Docker: stop and delete the database volume |
 | `make logs` | Docker: follow both containers' logs |
 | `make compose-smoke` | Docker: isolated containerised end-to-end check |
+| `make stream-up` | Docker: Kafka (KRaft) + Flink SQL + API + `kafka-worker` |
+| `make stream-smoke` | Isolated Kafka + Flink end-to-end smoke (bill, dedupe, aggregates) |
+| `make stream-logs` | Follow the streaming stack logs |
+| `make stream-down` | Stop the streaming stack and delete its volumes |
 
 ## Project layout
 
@@ -639,6 +691,9 @@ src/billing_engine/
   ingest.py           Validation, raw log + enqueue in one transaction
   processor.py        Rating, idempotent insert, DLQ routing
   worker.py           Queue polling loop
+  kafka_transport.py  Kafka producer/consumer wrapper (optional transport)
+  kafka_worker.py     Kafka consumer loop + CLI
+  processor.py        Rating, idempotent insert, DLQ routing
   rating.py           Versioned flat/tiered price book
   price_plans.json    Plan version 2026-10-v1
   store.py            SQLite store: inbox, events, aggregates, DLQ, closes
@@ -653,9 +708,10 @@ src/billing_engine/
   agent_demo.py       Scripted agent harness
 src/handlers.py       Lambda adapter shims (see AWS deployment)
 tests/                Unit, property, concurrency, edge, e2e and perf suites
-tools/                demo, chaos, smoke, compose_smoke, test_report, eval_suite
+tools/                demo, chaos, smoke, compose_smoke, kafka_smoke, test_report, eval_suite
 loadtest/             Locust and k6 scripts
 infra/cdk/            AWS CDK stack (blueprint)
+infra/streaming/      Kafka KRaft + Flink SQL + API/worker Compose runtime
 docs/                 Architecture, streaming, data lake, governance, ADRs, SLOs, runbook, cost, security, test plan
 skills/               Agent skills
 reports/              Generated test reports
@@ -671,22 +727,29 @@ lifecycle rules, least-privilege IAM grants and CloudWatch alarms for DLQ depth,
 age and processor errors. Estimated cost is about $15-16 per million events
 ([docs/COST.md](docs/COST.md)).
 
-**It is not deployable yet.** Known gaps:
+The **streaming variant** is already runnable locally: Kafka KRaft + Flink SQL + the
+API + `kafka-worker` in `infra/streaming/`. Its production mapping is Amazon MSK plus
+Amazon Managed Service for Apache Flink; those managed resources are not in the CDK
+stack yet.
+
+**The AWS CDK stack is not deployable yet.** Known gaps:
 
 1. The Lambda handler strings (`handlers.ingest.handler`, ...) do not match the
    functions in `src/handlers.py` (`ingest_handler`, ...).
 2. The code asset is `src/` without bundling, so third-party dependencies such as
    pydantic are not packaged.
 3. There are no DynamoDB, SQS or S3 adapters: `store.py` is SQLite-only, so ingest does
-   not publish to SQS and each Lambda would use its own temporary database.
+   not publish to SQS and each Lambda would use its own temporary database. (The
+   streaming runtime does have a Kafka adapter; it is not wired into the Lambda path.)
 4. The close, metrics and reconcile routes are not defined, and the batch path differs
    (`/usage-events/batch` vs. `:batch` locally).
 5. The CI `cdk-synth` job never runs synth: the `cdk` CLI is not installed and failures
    are ignored.
 
 The planned path: a storage interface with DynamoDB/SQS/S3 implementations tested
-against moto, corrected handlers with dependency bundling, the missing routes, and a
-CI synth step that fails on error.
+against moto, corrected handlers with dependency bundling, the missing routes, MSK +
+Managed Flink constructs for the streaming variant, and a CI synth step that fails on
+error.
 
 ## Troubleshooting
 
@@ -702,16 +765,20 @@ CI synth step that fails on error.
 | Events stay pending | The worker is not running: `make worker`, or check `make logs`. |
 | `make: *** No rule to make target 'report-pref'` | Typo: the target is `make report-perf`. |
 | Why is the Docker database not in `./data`? | Docker Desktop bind mounts do not enforce SQLite file locks across containers, which can let the API and worker write concurrently. The database lives on the named volume `billing-data`; only CSV exports are bind-mounted. Use `docker compose exec api ...` for CLI tools. |
+| `make stream-smoke` fails waiting for the deduped topic | Flink's `flink-submit` exits after submitting; check `make stream-logs` for SQL errors and the Flink UI at <http://localhost:8081>. Recreate it with `docker compose -f infra/streaming/docker-compose.yml up -d --force-recreate flink-submit`. |
+| Port 18000, 29092 or 8081 already in use | Override the API port with `STREAM_PORT=18001 make stream-up`; stop the other Kafka/Flink stack first, or use `docker compose -f infra/streaming/docker-compose.yml down -v`. |
+| Streaming API returns 202 but no bill | Check `kafka-worker` is running and the consumer group is consuming `usage-events`; inspect `docker compose -f infra/streaming/docker-compose.yml logs kafka-worker` and `/v1/ops/metrics` for `kafka_publish_failed` or `kafka_consume_error`. |
 | Performance target missed locally | Re-run on an idle machine; see [Testing and quality](#testing-and-quality). |
 
 ## Roadmap and non-goals
 
 From [ROADMAP.md](ROADMAP.md):
 
-- **v0.2 pilot:** SSO and per-tenant keys, a streaming decision (stay on SQS below
-  ~5k events/s, otherwise Kinesis and Flink), Athena analytics over the raw log, counter
-  sharding for very large customers, DLQ auto-replay, error budgets with paging, and an
-  MCP evaluation set with scoped tool permissions.
+- **v0.2 pilot:** SSO and per-tenant keys, production streaming decision (the local
+  Kafka + Flink runtime is implemented; choose Amazon MSK + Managed Service for Apache
+  Flink vs. Kinesis at sustained >5k events/s), Athena analytics over the raw log,
+  counter sharding for very large customers, DLQ auto-replay, error budgets with
+  paging, and an MCP evaluation set with scoped tool permissions.
 - **v1.0 production:** multi-region, backup and restore drills, canary deployments
   with automatic rollback, invoicing, tax and currency, and a cost-optimisation pass.
 
@@ -726,7 +793,8 @@ Idempotency, reconciliation and observability were never cut.
 |---|---|
 | [Agentic-Usage-Billing-Engine_PRD.md](Agentic-Usage-Billing-Engine_PRD.md) | Product requirements: goals, functional and non-functional requirements, plan, risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture note: data flow, trade-offs, hot partitions, scale math |
-| [docs/STREAMING.md](docs/STREAMING.md) | Kafka-style partitions, 20→40 scaling, cross-partition ordering, checksum repair |
+| [docs/STREAMING.md](docs/STREAMING.md) | Kafka + Flink runtime, partitions, 20→40 scaling, cross-partition ordering, checksum repair |
+| [infra/streaming/README.md](infra/streaming/README.md) | Local Kafka + Flink runtime: topology, commands, ports, topics, AWS mapping |
 | [docs/DATALAKE.md](docs/DATALAKE.md) | Iceberg/Delta/Hudi choice, snapshots, time travel, compaction, checksums |
 | [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | Agent-code verification, risk tiers, signed deploy verdicts, review capacity |
 | [docs/ADRS/](docs/ADRS/) | Decision records: idempotency, rating, audit |

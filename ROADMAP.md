@@ -2,12 +2,14 @@
 
 ## v0.1 POC (this repo, 2-day timebox) ✅
 Thin slice: ingest → idempotent process → rate → aggregate → query →
-reconcile → MCP. Local runs without AWS; CDK deploys to dev.
+reconcile → MCP. Local runs without AWS (SQLite or Kafka + Flink); the AWS CDK
+stack is a blueprint, not yet deployable.
 
 ## v0.2 Pilot (4–6 wks)
 - Auth: Cognito/SSO, per-tenant API keys, tenant isolation tests.
-- Streaming decision: stay on SQS until sustained >5k ev/s, else Kinesis + Flink
-  (spike first; ADR).
+- Streaming: local Kafka (KRaft, 20 partitions) + Flink SQL runtime is implemented
+  and smoke-tested. Production decision: Amazon MSK + Managed Service for Apache
+  Flink, or Kinesis, at sustained >5k ev/s (spike first; ADR).
 - Analytics: Athena over S3 raw log; Finance CSV → real ERP stub contract.
 - Hardening: counter sharding for whale customers, DLQ auto-replay, chaos tests
   in CI, error budgets + paging (SLOS.md).

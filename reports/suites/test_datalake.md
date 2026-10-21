@@ -14,6 +14,6 @@ Data-lake table: snapshots, partition pruning, time travel, compaction, checksum
 | `test_catalog_properties_match_the_format[hudi]` | PASSED | unit | NFR-DATALAKE, FR5 | 0.002 | Catalog properties match the format [hudi] |
 | `test_append_partitions_by_day_and_customer_with_checksums` | PASSED | unit | NFR-DATALAKE, FR5 | 0.005 | Append partitions by day and customer with checksums |
 | `test_scan_prunes_partitions_and_supports_time_travel` | PASSED | unit | NFR-DATALAKE, FR5 | 0.006 | Scan prunes partitions and supports time travel |
-| `test_compaction_rewrites_live_files_but_keeps_history_readable` | PASSED | unit | NFR-DATALAKE, FR5 | 0.005 | Compaction rewrites live files but keeps history readable |
+| `test_compaction_rewrites_live_files_but_keeps_history_readable` | PASSED | unit | NFR-DATALAKE, FR5 | 0.006 | Compaction rewrites live files but keeps history readable |
 | `test_compaction_rejects_empty_table` | PASSED | unit | NFR-DATALAKE, FR5 | 0.002 | Compaction rejects empty table |
 | `test_verify_detects_missing_corrupt_and_truncated_files` | PASSED | unit | NFR-DATALAKE, FR5 | 0.004 | Verify detects missing corrupt and truncated files |
