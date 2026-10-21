@@ -9,8 +9,8 @@ AI agents answer billing questions over the same data.
 > **Status: v0.1 proof of concept.**
 > - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`),
 >   in Docker (`make up`), and as a **Kafka + Flink streaming stack** inside the *same*
->   Compose project (`make up-streaming`; proven by `make stream-smoke`). 280 gating
->   tests plus 3 opt-in perf tests, 100% line and branch coverage, a 10-eval
+>   Compose project (`make up-streaming`; proven by `make stream-smoke`). 291 gating
+>   tests plus 3 opt-in perf tests (294 total), 100% line and branch coverage, a 10-eval
 >   correctness suite, performance targets measured against live processes, and
 >   containerised end-to-end smoke tests.
 > - **Blueprint only:** the AWS deployment in `infra/cdk/` describes the target
