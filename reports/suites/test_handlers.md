@@ -9,7 +9,7 @@ Lambda adapters driven with API Gateway proxy / SQS event shapes.
 | Test | Status | Kind | Requirements | Time (s) | What it verifies |
 |---|---|---|---|---|---|
 | `test_ingest_single` | PASSED | unit | FR1, FR2, FR4 | 0.006 | Ingest single |
-| `test_ingest_batch_by_path_and_by_body` | PASSED | unit | FR1, FR2, FR4 | 0.004 | Ingest batch by path and by body |
+| `test_ingest_batch_by_path_and_by_body` | PASSED | unit | FR1, FR2, FR4 | 0.005 | Ingest batch by path and by body |
 | `test_ingest_invalid_returns_400` | PASSED | unit | FR1, FR2, FR4 | 0.002 | Ingest invalid returns 400 |
 | `test_processor_handler_accepts_dedupes_and_dlqs` | PASSED | unit | FR1, FR2, FR4 | 0.004 | Processor handler accepts dedupes and dlqs |
 | `test_query_handler_usage_and_bill` | PASSED | unit | FR1, FR2, FR4 | 0.004 | Query handler usage and bill |

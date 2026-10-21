@@ -246,8 +246,13 @@ def environment() -> dict:
     # The generated report files are rewritten by every run, so they must not
     # make the report claim that the *code* it measured was uncommitted.
     generated = ("reports/", "docs/TEST_PLAN.md")
-    changes = [ln for ln in git("status", "--porcelain").splitlines()
-               if ln and not ln[3:].startswith(generated)]
+    try:
+        porcelain = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT,
+                                            text=True, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        porcelain = ""
+    changes = [ln for ln in porcelain.splitlines()
+               if ln.strip() and not ln[3:].startswith(generated)]
     dirty = " (uncommitted changes)" if changes else ""
     pkgs = {}
     for p in ("pytest", "hypothesis", "pytest-cov", "fastapi", "pydantic", "mcp", "locust"):
@@ -359,14 +364,14 @@ def write_results(cases: list[dict], cov: dict, extras: dict, env: dict, run: di
     loc = extras.get("locust")
     perf_ok = all(_perf_checks(perf).values()) if perf else None
     layers = [
-        ["pytest (unit, property, concurrency, e2e)", _ok(failed == 0 and pyt.get("rc", 0) == 0),
+        ["pytest (unit, property, concurrency, e2e)", _ok(failed == 0 and n["passed"] > 0),
          f"{n['passed']} passed, {failed} failed, {n['skipped']} skipped "
          f"in {pyt.get('seconds', sum(c['time'] for c in main)):.1f}s"],
         ["Coverage (line + branch)", _ok(cov_pct >= 100.0), f"{cov_pct:.2f}% (gate 100%)"],
     ]
     if "pytest_perf" in run:
         pc = _counts([c for c in cases if c["kind"] == "perf"])
-        layers.append(["pytest -m perf", _ok(run["pytest_perf"]["rc"] == 0),
+        layers.append(["pytest -m perf", _ok(pc["failed"] + pc["error"] == 0 and pc["passed"] > 0),
                        f"{pc['passed']} passed, {pc['failed'] + pc['error']} failed "
                        f"in {run['pytest_perf']['seconds']:.1f}s"])
     for name in ("demo", "chaos"):

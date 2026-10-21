@@ -629,10 +629,10 @@ separate local processes, 5,000 events per scenario; full numbers in
 
 | Scenario | Target | Measured | Result |
 |---|---|---|---|
-| Sustained throughput (closed loop, 5,000 events) | >= 500 events/s | 1,114.6 events/s, 0 errors, all 5,000 billed, reconcile match | PASS |
-| Ingest latency at 500 events/s (open loop) | service p99 < 200 ms | service p99 19.0 ms; end-to-end client-observed p50 4.6 ms / p95 9.9 ms / p99 39.0 ms | PASS |
-| Burst: 1,000 events as 10 batches of 100 | <= 1 s | 0.005 s | PASS |
-| Locust: 50 users for 20 s, mixed single, batch and bill reads | 0 failures | 17,416 requests, 0 failures, ~2,565 events/s ingested, reconcile match over 50,811 events | PASS |
+| Sustained throughput (closed loop, 5,000 events) | >= 500 events/s | 1,006.3 events/s, 0 errors, all 5,000 billed, reconcile match | PASS |
+| Ingest latency at 500 events/s (open loop) | service p99 < 200 ms | service p99 21.9 ms; end-to-end client-observed p50 4.8 ms / p95 11.6 ms / p99 56.6 ms | PASS |
+| Burst: 1,000 events as 10 batches of 100 | <= 1 s | 0.007 s | PASS |
+| Locust: 50 users for 20 s, mixed single, batch and bill reads | 0 failures | 17,059 requests, 0 failures, ~2,553 events/s ingested, reconcile match over 50,457 events | PASS |
 
 The latency SLO is the service's own `ingest_ms` histogram — the SLI
 [docs/SLOS.md](docs/SLOS.md) names. The end-to-end client-observed p99 is

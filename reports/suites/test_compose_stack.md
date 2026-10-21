@@ -8,10 +8,10 @@ The whole solution is one Compose project: monolith + Kafka + Flink. These are c
 
 | Test | Status | Kind | Requirements | Time (s) | What it verifies |
 |---|---|---|---|---|---|
-| `test_one_compose_file_defines_the_whole_solution` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.020 | The monolith and the streaming tier live in the same project: one |
-| `test_streaming_tier_is_opt_in_but_the_monolith_always_runs` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.000 | Streaming tier is opt in but the monolith always runs |
-| `test_one_switch_moves_api_and_worker_to_kafka` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.001 | One switch moves api and worker to kafka |
-| `test_worker_uses_the_unified_entry_point` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.001 | `python -m billing_engine.worker` is the single worker command: it polls |
+| `test_one_compose_file_defines_the_whole_solution` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.021 | The monolith and the streaming tier live in the same project: one |
+| `test_streaming_tier_is_opt_in_but_the_monolith_always_runs` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.001 | Streaming tier is opt in but the monolith always runs |
+| `test_one_switch_moves_api_and_worker_to_kafka` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.000 | One switch moves api and worker to kafka |
+| `test_worker_uses_the_unified_entry_point` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.000 | `python -m billing_engine.worker` is the single worker command: it polls |
 | `test_topics_exist_before_the_api_and_worker_start` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.000 | Topics exist before the api and worker start |
 | `test_kafka_broker_keeps_the_20_partition_plan` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.000 | Kafka broker keeps the 20 partition plan |
 | `test_topic_script_creates_every_documented_topic` | PASSED | unit | NFR-STREAMING, NFR-GUARDRAILS | 0.001 | Topic script creates every documented topic |
