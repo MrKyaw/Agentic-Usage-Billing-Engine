@@ -9,7 +9,11 @@ ledger insert, so a crash re-delivers the message and the conditional insert
 absorbs the duplicate.
 
 Run locally:  python -m billing_engine.kafka_worker
-Docker:       infra/streaming/docker-compose.yml (service ``kafka-worker``)
+              python -m billing_engine.worker  (same loop once
+              BILLING_KAFKA_BOOTSTRAP is set — the unified worker entry point)
+Docker:       docker-compose.yml, streaming profile (services ``api`` +
+              ``worker``; the worker consumes Kafka because the deployment sets
+              BILLING_KAFKA_BOOTSTRAP)
 """
 from __future__ import annotations
 

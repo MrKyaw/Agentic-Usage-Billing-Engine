@@ -14,6 +14,7 @@
 Serverless pay-per-use: $0 at idle. Optimization levers: batch ingest (fewer
 API/Lambda calls), log sampling, DDB autoscaling at pilot, S3 lifecycle already on.
 
-The local Kafka + Flink stack (`infra/streaming/`) adds no cloud cost; this table
+The local Kafka + Flink tier (the `streaming` Compose profile, assets in
+`infra/streaming/`) adds no cloud cost; this table
 does not include Amazon MSK or Managed Service for Apache Flink, which are a
 production blueprint rather than part of the POC estimate.

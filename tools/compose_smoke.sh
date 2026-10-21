@@ -9,6 +9,8 @@ cd "$ROOT"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-billing-smoke}"
 export PORT="${SMOKE_PORT:-18000}"
+# The monolith path: the API writes the SQLite inbox and the worker polls it.
+export BILLING_KAFKA_BOOTSTRAP=""
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/billing-smoke.XXXXXX")"
 export DATA_DIR
 mkdir -p "$DATA_DIR/exports"

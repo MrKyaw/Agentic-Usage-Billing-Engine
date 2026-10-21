@@ -23,6 +23,33 @@
 - Lesson: hypothesis state machines earn their keep — the hand-written tests
   never interleaved 6 crashes before a process.
 
+## 2026-10-21 — Kafka + Flink runtime, embedded in the monolith (agent-built, human-reviewed)
+- Earlier the streaming tier lived in its own Compose project next to the
+  monolith, so "the system" was two stacks, two ports and two workers.
+  Now `docker-compose.yml` is the whole solution: the `streaming` profile adds
+  Kafka (KRaft, 20 partitions) and Flink 1.19 SQL jobs to the *same* project,
+  and one variable (`BILLING_KAFKA_BOOTSTRAP`) switches the API **and** the
+  worker to the Kafka queue. `python -m billing_engine.worker` is now the single
+  worker entry point (inbox poller or Kafka consumer).
+- Decision: the raw log stays the source of truth and the ledger's conditional
+  insert stays the authoritative dedupe; Flink output is a read model only.
+- Proof: `make stream-smoke` (isolated project) — bill $1.00 for 10 unique
+  events, reconciliation match, 10 deduped ids from 12 raw events, 12.0
+  aggregate quantity; `make compose-smoke` still green for the monolith path;
+  `tests/test_compose_stack.py` guards the wiring; 291 tests, 100% line and
+  branch coverage.
+
+## 2026-10-21 — CI gates fixed after a Ruff release (agent-built, human-reviewed)
+- `ruff check src tests tools` started failing with 80 findings because a new
+  Ruff release enables extra rule families by default. Pinned `ruff==0.11.10`
+  and made the baseline explicit (`[tool.ruff.lint] select = E4,E7,E9,F`).
+- The TODO/FIXME guardrail matched the *words* in `governance.py`'s own
+  docstring, not real comments; it now greps for `#.*(TODO|FIXME)`.
+- Proof: CI run 39639636341 — `test`, `guardrails`, `compose-smoke`,
+  `streaming-smoke`, `cdk-synth` all green (the perf job stays non-gating: it
+  tracks a shared-runner load measurement, and local perf passes at
+  p99 80.8 ms vs the 200 ms SLO).
+
 ## How to log future entries
 Append date, change, who decided (human/agent), proof (`demo.sh`/test/ADR link).
 Every production incident gets an entry + RUNBOOK update.

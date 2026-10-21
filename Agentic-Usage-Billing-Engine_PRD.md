@@ -115,7 +115,7 @@ Producers ─► API Gateway ─► Ingest Lambda ─► SQS (FIFO or standard +
 - At-least-once delivery + idempotent consumer, rather than chasing exactly-once transport.
 - DynamoDB for dedupe and aggregates (conditional writes, atomic counters); S3 as the source of truth for replay.
 - Aggregates are derived and rebuildable from the raw log, which is what makes reconciliation possible.
-- Alternative considered for production: Kinesis/Kafka + Flink for higher throughput and windowing. A local Kafka 3.8 (KRaft, 20 partitions) + Flink 1.19 SQL runtime is implemented and smoke-tested in `infra/streaming/`; the partition/ordering/checksum semantics are also executable in `billing_engine.partitioning`. The managed AWS deployment (MSK + Managed Service for Apache Flink) remains deferred.
+- Alternative considered for production: Kinesis/Kafka + Flink for higher throughput and windowing. A local Kafka 3.8 (KRaft, 20 partitions) + Flink 1.19 SQL runtime is implemented and smoke-tested as the `streaming` profile of the monolith's own Compose project (assets in `infra/streaming/`, started with `make up-streaming`); the partition/ordering/checksum semantics are also executable in `billing_engine.partitioning`. The managed AWS deployment (MSK + Managed Service for Apache Flink) remains deferred.
 
 **Suggested stack:** Python or Go (pick one), AWS CDK or Terraform, pytest, k6 or Locust for load testing.
 
@@ -190,7 +190,7 @@ Producers ─► API Gateway ─► Ingest Lambda ─► SQS (FIFO or standard +
 ## 13. Post-POC Roadmap (not in scope now)
 
 - Multi-region resilience and data consistency strategy
-- Managed streaming deployment (Amazon MSK + Managed Service for Apache Flink) and a Kinesis comparison if throughput requires it; the local Kafka + Flink runtime already exists
+- Managed streaming deployment (Amazon MSK + Managed Service for Apache Flink) and a Kinesis comparison if throughput requires it; the local Kafka + Flink tier already runs inside the monolith's Compose project
 - Finance/ERP integration and invoice generation
 - Full authN/authZ, tenant isolation, SLO definitions and error budgets
 - Progressive delivery, deployment safety, and cost-optimization pass

@@ -243,7 +243,12 @@ def environment() -> dict:
         except (OSError, subprocess.CalledProcessError):
             return ""
     sha = git("rev-parse", "--short", "HEAD") or "n/a (not a git checkout)"
-    dirty = " (uncommitted changes)" if git("status", "--porcelain") else ""
+    # The generated report files are rewritten by every run, so they must not
+    # make the report claim that the *code* it measured was uncommitted.
+    generated = ("reports/", "docs/TEST_PLAN.md")
+    changes = [ln for ln in git("status", "--porcelain").splitlines()
+               if ln and not ln[3:].startswith(generated)]
+    dirty = " (uncommitted changes)" if changes else ""
     pkgs = {}
     for p in ("pytest", "hypothesis", "pytest-cov", "fastapi", "pydantic", "mcp", "locust"):
         try:
@@ -467,7 +472,13 @@ def _perf_checks(perf: dict) -> dict[str, bool]:
         checks["capacity"] = (c["throughput_eps"] >= c["thresholds"]["min_eps"]
                               and c["non_2xx"] == 0 and c["reconcile_ok"])
     if lat := perf.get("latency"):
-        checks["latency"] = (lat["client_latency"]["p99_ms"] < lat["thresholds"]["p99_ms"]
+        # The pass/fail SLO is the service's own ingest_ms p99 (the SLI SLOS.md
+        # names); the client-observed p99 is a bounded end-to-end guardrail.
+        server_p99 = (lat.get("server_ingest_ms") or {}).get("p99")
+        client_bound = lat["thresholds"].get("client_p99_ms", lat["thresholds"]["p99_ms"])
+        checks["latency"] = (server_p99 is not None
+                             and server_p99 < lat["thresholds"]["p99_ms"]
+                             and lat["client_latency"]["p99_ms"] < client_bound
                              and lat["non_2xx"] == 0 and lat["reconcile_ok"])
     if b := perf.get("burst"):
         checks["burst"] = b["wall_s"] <= b["thresholds"]["burst_s"] and b["reconcile_ok"]
@@ -486,9 +497,15 @@ def _perf_section(perf: dict) -> list[str]:
                   "0 / all", _ok(c["non_2xx"] == 0 and c["reconcile_ok"])]]
     if lat := perf.get("latency"):
         cl = lat["client_latency"]
+        server_p99 = (lat.get("server_ingest_ms") or {}).get("p99")
+        client_bound = lat["thresholds"].get("client_p99_ms", lat["thresholds"]["p99_ms"])
         rows += [[f"Ingest latency at {lat['target_eps']:g} events/s (open loop)",
-                  f"p50 {cl['p50_ms']} / p95 {cl['p95_ms']} / p99 {cl['p99_ms']} / max {cl['max_ms']} ms",
-                  f"p99 < {lat['thresholds']['p99_ms']:g} ms", _ok(cl["p99_ms"] < lat["thresholds"]["p99_ms"])],
+                  f"service p99 {server_p99} ms (ingest_ms histogram)",
+                  f"p99 < {lat['thresholds']['p99_ms']:g} ms",
+                  _ok(server_p99 is not None and server_p99 < lat["thresholds"]["p99_ms"])],
+                 ["  ...end-to-end client-observed p50 / p95 / p99 / max",
+                  f"{cl['p50_ms']} / {cl['p95_ms']} / {cl['p99_ms']} / {cl['max_ms']} ms",
+                  f"p99 < {client_bound:g} ms", _ok(cl["p99_ms"] < client_bound)],
                  ["  ...achieved rate / drain after load",
                   f"{lat['achieved_eps']} events/s / {lat['drain_after_ingest_s']} s", "info", "-"]]
     if b := perf.get("burst"):

@@ -11,7 +11,7 @@ Kafka-style partitioning, ordering, checksums and the ledger digest endpoint.
 | `test_jump_hash_is_deterministic_and_bounded` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.001 | Jump hash is deterministic and bounded |
 | `test_jump_hash_rejects_invalid_bucket_count` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.003 | Jump hash rejects invalid bucket count |
 | `test_scaling_20_to_40_moves_a_bounded_fraction_and_keeps_one_owner` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.005 | Scaling 20 to 40 moves a bounded fraction and keeps one owner |
-| `test_scale_plan_with_same_bucket_count_is_a_noop` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.000 | Scale plan with same bucket count is a noop |
+| `test_scale_plan_with_same_bucket_count_is_a_noop` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.001 | Scale plan with same bucket count is a noop |
 | `test_scale_plan_empty_keys_has_zero_fraction` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.000 | Scale plan empty keys has zero fraction |
 | `test_scale_plan_rejects_invalid_inputs` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.002 | Scale plan rejects invalid inputs |
 | `test_partitioner_routes_key_and_validates` | PASSED | unit | NFR-STREAMING, NFR-CORRECTNESS | 0.001 | Partitioner routes key and validates |

@@ -10,5 +10,12 @@
 | Freshness: queue age | alarm > 30 s | alarm > 60 s, page > 5 min | SQS age metric or Kafka consumer lag |
 | Agent answers | 5/5 scripted via MCP | 95% eval set | `agent_demo` eval |
 
+Ingest latency is read from the service's own `ingest_ms` histogram (the same
+SLI the API exports at `/v1/ops/metrics`). The opt-in perf suite
+(`pytest -m perf`) asserts that server-side p99 against the 200 ms target and
+records the end-to-end client-observed p99 next to it: the client number also
+contains the load generator's own scheduling, so it is a diagnostic and a
+stall guardrail (3x the target), not the SLO.
+
 Error budget policy (pilot): correctness burn = freeze deploys + incident;
 latency burn = scale consumer before features. History of burns: `history/`.

@@ -4,10 +4,11 @@ This note answers the Kafka/event-ordering questions directly and points at the
 code that implements each answer. Two transports are runnable:
 
 - **Default local mode:** SQLite inbox + `worker.py` (no broker).
-- **Streaming mode:** Kafka (KRaft) is the queue, a Python `kafka-worker` applies
-  the idempotent ledger, and Flink SQL maintains a deduped read model plus
-  10-second operational aggregates. The stack lives in
-  [`infra/streaming/`](../infra/streaming/) and starts with `make stream-up`.
+- **Streaming mode:** Kafka (KRaft) is the queue, the worker applies the
+  idempotent ledger, and Flink SQL maintains a deduped read model plus 10-second
+  operational aggregates. It is the `streaming` profile of the same
+  `docker-compose.yml` project (Kafka/Flink assets in
+  [`infra/streaming/`](../infra/streaming/)) and starts with `make up-streaming`.
 
 The *semantics* below live in
 [`src/billing_engine/partitioning.py`](../src/billing_engine/partitioning.py) so
@@ -16,14 +17,16 @@ modes and to Kinesis.
 
 ## 0. Deployed Kafka + Flink runtime
 
-The local runtime is a real two-service streaming stack, not a design sketch:
+The local runtime is a real streaming stack inside the monolith's own Compose
+project — the same API, worker, database and volume, with Kafka and Flink added
+by the `streaming` profile. It is not a design sketch:
 
 ```text
 producer
   └─ POST /v1/usage-events
        ├─ raw event log (JSONL, source of truth)
        └─ Kafka usage-events (20 partitions, key = customer_id)
-            ├─ kafka-worker ──> idempotent processor ──> SQLite ledger/aggregates
+            ├─ worker ──> idempotent processor ──> SQLite ledger/aggregates
             ├─ Flink SQL #1 ──> usage-events-deduped (upsert-kafka, compacted)
             └─ Flink SQL #2 ──> usage-window-aggregates (10-second windows)
 ```
@@ -44,15 +47,15 @@ worker group) once Kafka recovers.
 
 | Service | Port / access | Notes |
 |---|---|---|
-| API | <http://localhost:18000> | `X-API-Key: dev-key-123` |
-| Kafka (host listener) | `localhost:29092` | Container-to-container uses `kafka:9092` |
-| Flink UI | <http://localhost:8081> | JobManager REST + dashboard |
-| `kafka-worker` | internal | Consumes `usage-events` with manual commits |
+| API | <http://localhost:8000> (`PORT`) | `X-API-Key: dev-key-123` |
+| Kafka (host listener) | `localhost:29092` (`KAFKA_PORT`) | Container-to-container uses `kafka:9092` |
+| Flink UI | <http://localhost:8081> (`FLINK_PORT`) | JobManager REST + dashboard |
+| `worker` | internal | Consumes `usage-events` with manual commits when Kafka is enabled |
 
 ### Commands
 
 ```bash
-make stream-up       # build and start Kafka, Flink, API and kafka-worker
+make up-streaming    # whole solution: monolith + Kafka + Flink (streaming profile)
 make stream-smoke    # isolated Compose project: publish, dedupe, aggregate, reconcile
 make stream-logs     # follow all services
 make stream-down     # stop and delete the streaming volumes
@@ -72,13 +75,15 @@ PASS Flink aggregate saw all 12 raw events (total_quantity=12.0)
 
 The unit tests in [`tests/test_kafka.py`](../tests/test_kafka.py) drive the
 producer/consumer with fake clients, so the suite still runs without Docker or a
-broker. CI also has a non-blocking `streaming-smoke` job that runs the Compose
-stack end to end.
+broker, and [`tests/test_compose_stack.py`](../tests/test_compose_stack.py) guards
+the Compose wiring (one switch for the transport, topics before the API, 20
+partitions). CI also has a non-blocking `streaming-smoke` job that runs the
+Compose stack end to end.
 
 ### What is authoritative, and what is a read model
 
 - **Billing authority:** the conditional insert on `event_id` in the SQLite
-  ledger. The Kafka worker commits offsets only after the processor returns, and
+  ledger. The worker commits Kafka offsets only after the processor returns, and
   a duplicate is a successful no-op. At-least-once delivery therefore has
   exactly-once *effect*.
 - **Flink dedupe:** an analytics read model. `ROW_NUMBER()` writes an
@@ -110,14 +115,14 @@ and Flink *runtime* is implemented, smoke-tested and exercised in CI.
 
 1. `make stream-logs` — look for `kafka_worker_started` and the two Flink jobs in
    the Flink UI.
-2. No bill movement: check `kafka-worker` logs for consumer group rebalances and
+2. No bill movement: check the worker logs for consumer group rebalances and
    `/v1/ops/metrics` for `kafka_publish_failed` or `kafka_consume_error`.
 3. Poison event: inspect `usage-events-dlq` with
-   `docker compose -f infra/streaming/docker-compose.yml exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic usage-events-dlq --from-beginning`.
+   `docker compose --profile streaming exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic usage-events-dlq --from-beginning`.
 4. Replay after a fix: reset the worker group to `earliest`, or replay the raw log
    into `usage-events`; the ledger will ignore duplicates.
 5. Flink jobs stopped: recreate `flink-submit` (it exits after submitting) with
-   `docker compose -f infra/streaming/docker-compose.yml up -d --force-recreate flink-submit`;
+   `docker compose --profile streaming up -d --force-recreate flink-submit`;
    state is checkpointed to the `flink-checkpoints` volume.
 
 ## 1. Dynamic scaling — "click a button and Kafka grows"

@@ -13,8 +13,13 @@ Two local paths are runnable:
 
 1. **Default (broker-free):** `Producers → API → raw log + SQLite inbox → worker →`
    `SQLite events/rated/aggregates → query / close / MCP`.
-2. **Streaming:** `Producers → API → raw log + Kafka usage-events → kafka-worker →`
+2. **Streaming:** `Producers → API → raw log + Kafka usage-events → worker →`
    `idempotent ledger`, with `Kafka → Flink SQL → deduped read model + window aggregates`.
+
+Both paths are the *same* deployment: one `docker-compose.yml` project, one
+worker entry point, one database and volume. `BILLING_KAFKA_BOOTSTRAP` selects the
+transport for the API and the worker at once; the `streaming` Compose profile adds
+the broker and the Flink jobs.
 
 The AWS target remains:
 `Producers → API GW → Ingest Lambda → SQS (+DLQ) → Processor Lambda →`
@@ -47,7 +52,8 @@ The local Kafka/Flink topology maps to Amazon MSK + Managed Service for Apache F
 
 Kafka only guarantees order within a partition. The repo implements the
 semantics that matter as a tested library (`billing_engine.partitioning`), and
-wires them to a runnable Kafka + Flink stack in `infra/streaming/`:
+wires them to a runnable Kafka + Flink tier of the monolith's own Compose project
+(assets in `infra/streaming/`):
 
 - jump-consistent hash: one owner per key, minimal movement when partitions grow;
 - fenced 20 → 40 cutover: pause → drain → bump epoch → resume, stale epochs rejected;
@@ -59,13 +65,15 @@ Runtime facts:
 
 - Kafka 3.8 in KRaft mode, 20 partitions, keyed by `customer_id`; raw topic
   `usage-events`, DLQ `usage-events-dlq`.
-- `kafka-worker` consumes the raw topic with manual commits and runs the same
-  `process_event` path as the SQLite worker.
+- The worker consumes the raw topic with manual commits and runs the same
+  `process_event` path as the SQLite worker; `python -m billing_engine.worker`
+  picks the transport from `BILLING_KAFKA_BOOTSTRAP`.
 - Flink 1.19 SQL job #1 dedupes by `event_id` into the compacted
   `usage-events-deduped` upsert topic (analytics read model).
 - Flink 1.19 SQL job #2 emits 10-second processing-time operational aggregates
   to `usage-window-aggregates`; it counts raw deliveries, including retries.
-- `make stream-smoke` proves bill = $1.00 for 10 unique events, reconciliation
+- `make up-streaming` starts the whole solution (monolith + Kafka + Flink);
+  `make stream-smoke` proves bill = $1.00 for 10 unique events, reconciliation
   match, 10 deduped ids from 12 raw events, and 12.0 aggregate quantity.
 
 See [STREAMING.md](STREAMING.md) for commands, ports, topics and the repair runbook.
@@ -84,8 +92,8 @@ JSONL maps to Parquet + an Iceberg catalog in production. See
 [DATALAKE.md](DATALAKE.md).
 
 ## What remains blueprint-only (and why)
-The local Kafka + Flink runtime is implemented and smoke-tested; what is **not**
-deployed is the managed AWS topology (MSK + Managed Service for Apache Flink +
+The local Kafka + Flink tier is implemented and smoke-tested inside the
+monolith's Compose project; what is **not** deployed is the managed AWS topology (MSK + Managed Service for Apache Flink +
 S3/Glue/Athena), multi-region (single-region multi-AZ; active-active is a pilot
 milestone with a consistency strategy), and real auth/ERP (API key + CSV stub).
 The DynamoDB/SQS/S3 adapters and the Lambda bundling gaps are listed in the README.

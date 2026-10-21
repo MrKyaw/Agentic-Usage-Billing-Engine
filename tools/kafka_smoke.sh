@@ -1,23 +1,32 @@
 #!/usr/bin/env bash
-# End-to-end Kafka + Flink smoke test.
+# End-to-end Kafka + Flink smoke test for the whole solution.
 #
-# Starts the local streaming stack, publishes 10 unique events plus 2 retries,
-# then proves three independent things:
+# Starts the unified stack (docker-compose.yml, streaming profile) — the same
+# monolith that `make up` runs, with Kafka as the queue — publishes 10 unique
+# events plus 2 retries, then proves three independent things:
 #   1. Kafka delivered every event to the billing worker (bill + reconcile).
 #   2. Flink deduped the retries into one record per event_id.
 #   3. Flink emitted a 10-second operational aggregate.
 #
-# It uses its own compose project and port, and tears the stack down on exit.
+# It uses its own Compose project, ports and data dir, and tears the stack down
+# on exit, so it never touches a running `make up` / `make up-streaming`.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-billing-stream-smoke}"
-export COMPOSE_PROJECT_NAME
-export STREAM_PORT="${STREAM_PORT:-18000}"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-billing-stream-smoke}"
+export PORT="${STREAM_PORT:-18000}"
+export KAFKA_PORT="${KAFKA_PORT:-29092}"
+export FLINK_PORT="${FLINK_PORT:-8081}"
+# Kafka mode: the API publishes to Kafka and the worker consumes the topic.
+export BILLING_KAFKA_BOOTSTRAP="${BILLING_KAFKA_BOOTSTRAP:-kafka:9092}"
+DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/billing-stream-smoke.XXXXXX")"
+export DATA_DIR
+mkdir -p "$DATA_DIR/exports"
 KEY="${BILLING_API_KEY:-dev-key-123}"
-BASE="http://localhost:${STREAM_PORT}"
-COMPOSE=(docker compose -f infra/streaming/docker-compose.yml)
+BASE="http://localhost:${PORT}"
+FLINK_UI="http://localhost:${FLINK_PORT}"
+COMPOSE=(docker compose --profile streaming)
 passed=0
 
 cleanup() {
@@ -26,10 +35,11 @@ cleanup() {
     "${COMPOSE[@]}" logs --no-color --tail 120 || true
   fi
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  rm -rf "$DATA_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "--- docker compose up (project=$COMPOSE_PROJECT_NAME port=$STREAM_PORT)"
+echo "--- docker compose up (project=$COMPOSE_PROJECT_NAME port=$PORT kafka=$KAFKA_PORT flink=$FLINK_PORT)"
 "${COMPOSE[@]}" up -d --build
 
 echo "--- wait for API health"
@@ -44,7 +54,7 @@ curl -fsS "$BASE/health" >/dev/null
 echo "--- wait for both Flink jobs to reach RUNNING"
 flink_ready=0
 for _ in $(seq 1 120); do
-  if curl -fsS "http://localhost:8081/jobs/overview" 2>/dev/null | python3 -c '
+  if curl -fsS "$FLINK_UI/jobs/overview" 2>/dev/null | python3 -c '
 import json
 import sys
 
@@ -65,7 +75,7 @@ raise SystemExit(0 if ok else 1)
 done
 if [ "$flink_ready" != 1 ]; then
   echo "FAIL Flink jobs did not reach RUNNING"
-  curl -sS "http://localhost:8081/jobs/overview" || true
+  curl -sS "$FLINK_UI/jobs/overview" || true
   exit 1
 fi
 echo "PASS both Flink jobs are RUNNING"

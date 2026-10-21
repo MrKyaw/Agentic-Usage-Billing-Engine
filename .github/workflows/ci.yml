@@ -66,7 +66,7 @@ jobs:
         run: bash tools/kafka_smoke.sh
       - name: Streaming logs on failure
         if: failure()
-        run: docker compose -f infra/streaming/docker-compose.yml logs --no-color --tail 200 || true
+        run: docker compose --profile streaming logs --no-color --tail 200 || true
   cdk-synth:
     runs-on: ubuntu-latest
     steps:

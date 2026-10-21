@@ -466,3 +466,31 @@ def test_api_default_mode_keeps_inbox(default_store, monkeypatch):
                        headers=H).status_code == 202
     assert default_store.pending_count() == 1
     assert bus.published == []
+
+
+def test_unified_worker_entrypoint_dispatches_to_the_kafka_consumer(monkeypatch):
+    """`python -m billing_engine.worker` is the one worker command: with the
+    transport switch set it consumes the Kafka topic instead of the inbox."""
+    from billing_engine import kafka_worker, worker
+
+    called: dict = {}
+
+    def fake_run(**kwargs):
+        called.update(kwargs)
+        return {"accepted": 0, "duplicate": 0, "dlq": 0, "errors": 0}
+
+    monkeypatch.setenv("BILLING_KAFKA_BOOTSTRAP", "kafka:9092")
+    monkeypatch.setattr(kafka_worker, "run", fake_run)
+    worker.main(max_idle_polls=2)
+    assert called == {"max_idle_polls": 2}
+
+
+def test_kafka_enabled_reads_the_transport_switch(monkeypatch):
+    from billing_engine import worker
+
+    monkeypatch.delenv("BILLING_KAFKA_BOOTSTRAP", raising=False)
+    assert worker.kafka_enabled() is False
+    monkeypatch.setenv("BILLING_KAFKA_BOOTSTRAP", "   ")
+    assert worker.kafka_enabled() is False
+    monkeypatch.setenv("BILLING_KAFKA_BOOTSTRAP", "kafka:9092")
+    assert worker.kafka_enabled() is True

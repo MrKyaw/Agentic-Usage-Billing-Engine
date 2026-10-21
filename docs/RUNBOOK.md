@@ -30,3 +30,21 @@ throttle or bug.
 idempotent, so already-billed redeliveries drop as duplicates and still-poison
 events re-DLQ bounded-ly. Throttle → back off, redrive. Then drain + reconcile.
 **Never:** delete DLQ without redrive + reconcile.
+
+## Local streaming variant (Kafka + Flink)
+
+The same runbook applies when the deployment runs with
+`BILLING_KAFKA_BOOTSTRAP` set (`make up-streaming`), with these substitutions:
+
+| Mode 2/3 concept | Local streaming equivalent |
+|---|---|
+| Queue depth | `GET /v1/ops/metrics` → `queue.pending` (SQLite inbox is empty in Kafka mode) + consumer lag on `usage-events` |
+| Worker | the `worker` service; it consumes `usage-events` with manual commits (`make stream-logs`) |
+| DLQ | topic `usage-events-dlq` — inspect with `docker compose --profile streaming exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic usage-events-dlq --from-beginning` |
+| Replay | reset the consumer group to `earliest`, or replay the raw log into `usage-events`; the ledger's conditional insert drops the duplicates |
+| Publish failures | `kafka_publish_failed_total` — the raw log is already durable, so replay the raw log; ingest is never failed by a broker outage |
+
+Flink is a read model, not a billing input: `usage-events-deduped` is a compacted
+upsert stream (latest value wins) and `usage-window-aggregates` counts raw
+deliveries. Do not bill from either topic — bills come from the ledger, and
+reconciliation replays the raw log.
