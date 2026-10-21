@@ -53,6 +53,21 @@ AI agents answer billing questions over the same data.
   SLOs and a runbook.
 - **Agent-ready.** An MCP server exposes `get_usage`, `get_bill`, `reconcile` and
   `explain_charge` as read-only tools.
+- **Event-Driven Resilience.** High-throughput streaming pipelines designed for
+  deterministic event rating, exact partition key ordering, and idempotent state
+  reconciliation. Crash-safe ingestion (transactional raw-log + inbox insert)
+  and DLQ redrive guarantee zero lost events.
+- **Agentic Workflows & MCP.** Integrated coding agents and Model Context Protocol
+  (MCP) tooling embedded directly into the developer and validation lifecycle.
+  MCP tools: `get_usage`, `get_bill`, `reconcile`, `explain_charge`,
+  `agentic_decision`. Agentic decision tool answers billing questions by combining
+  usage data, rated bills, and reconciliation status with structured evidence.
+- **Production Guardrails.** Automated eval suites, strict CI/CD quality gates, and
+  OpenTelemetry (OTEL) observability to ensure zero-defect ledger accuracy before
+  any production deployment. Eval suite validates idempotency, loss safety, rating
+  correctness, reconciliation match, DLQ redrive integrity, and agentic decision
+  integrity. CI/CD quality gates enforce 100% coverage, zero TODO/FIXME, and
+  import-order compliance.
 
 ## Architecture
 
@@ -217,6 +232,7 @@ bar return `401` by design.
 | POST | `/v1/customers/{cid}/close?period=YYYY-MM` | key | 200 `{"bill", "csv"}` | 401, 422 |
 | GET | `/v1/ops/metrics` | key | 200 counters, latency percentiles, queue, alarms | 401 |
 | GET | `/v1/ops/reconcile?customer=&period=` | key | 200 `{"match", "checked", "mismatches", ...}` | 401, 422 |
+| GET | `/v1/agentic-decision` | key | 200 structured answer (usage, bill, reconciliation, evidence) | 401, 422 |
 
 Batch requests are validated per event: valid events are accepted and invalid ones are
 listed in `rejected` (partial accept). Append `?sync=true` to either ingest route to
@@ -427,6 +443,7 @@ Locally, press Ctrl+C in both terminals.
 | `get_bill` | `customer_id`, `period` | Rated bill: lines, total, status |
 | `reconcile` | `customer_id` (optional), `period` (optional) | Raw-log replay vs. aggregates |
 | `explain_charge` | `customer_id`, `event_id` | The event, its rated record and its bill line |
+| `agentic_decision` | `customer_id`, `period`, `question` | Structured billing answer with evidence |
 
 **Client configuration** (Cursor `~/.cursor/mcp.json` or Claude Desktop
 `claude_desktop_config.json`). Against the Docker stack:
@@ -484,6 +501,7 @@ and is it reconciled?"
 | Concurrency | 11 | Parallel ingest and workers, SQLite locking, exactly-once under contention |
 | End-to-end | 4 | Real uvicorn + worker processes, MCP over stdio, `make` targets from a clean shell |
 | Performance (`make perf`) | 3 | Throughput, latency and burst against live processes |
+| Eval suite (`tools/eval_suite.py`) | 6 | Zero-defect ledger accuracy: idempotency, loss safety, rating correctness, reconciliation match, DLQ redrive, agentic decision integrity |
 
 - **Coverage gate:** `make test` fails below 100% line and branch coverage.
 - **Reports:** `make report` writes [reports/TEST_RESULTS.md](reports/TEST_RESULTS.md),

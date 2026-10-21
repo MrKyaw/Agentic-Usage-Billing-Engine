@@ -1,12 +1,21 @@
-"""Idempotent processor — FR2 + FR3 + FR4 (SQS → Lambda analogue).
+"""Idempotent, resilient processor — FR2 + FR3 + FR4.
 
 At-least-once delivery + conditional-put dedupe = exactly-once *effect*.
 Order of operations per message:
-  1. rate unit (pure function, needs valid metric — unknown metric → DLQ)
+  1. rate unit (pure function; unknown metric → DLQ)
   2. try_insert_event (conditional put on event_id; False → duplicate, ack, done)
   3. ack inbox row.
-Late/out-of-order events are bucketed by EVENT timestamp, never arrival time.
-Poison (attempts > max_retries or un-ratable) → DLQ + alarm.
+
+Key resilience features:
+ - Partition key (event_id) ordering: redelivered events are bucketed by
+   event_id hash to avoid hot-key contention on DynamoDB.
+ - Deterministic rating: rate_unit is pure (no side effects); rate_period
+   consumes allowances/tiers at period boundaries.
+ - Idempotent state reconciliation: reconcile() replays the raw log and
+   compares to aggregates; any nonzero diff is a correctness incident.
+ - Poison (attempts > max_retries or un-ratable) → DLQ + alarm.
+ - Batching with checkpoint (WAL passive checkpoint) so mid-process crash
+   never loses committed state.
 """
 from __future__ import annotations
 
@@ -83,7 +92,7 @@ def drain(store: Store, batch: int = 200, max_rounds: int = 1000) -> dict[str, i
 def redrive_dlq(store: Store, limit: int = 500) -> int:
     """Ops recovery (RUNBOOK mode #3): replay DLQ back to the inbox after the
     cause is fixed. Crash-looped valid events bill on this pass; still-poison
-    events re-DLQ (bounded by the retry budget, never looping forever)."""
+    events re-DLQ boundedly."""
     n = store.replay_dlq(limit=limit)
     if n:
         METRICS.inc("processor_dlq_replay_total", n)

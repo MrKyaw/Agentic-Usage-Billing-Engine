@@ -1,12 +1,13 @@
-"""MCP server — FR7. Read-only billing tools for AI agents.
+"""MCP server — FR7. Read-only billing tools for AI agents and agentic workflows.
 
-Tools: get_usage, get_bill, reconcile, explain_charge.
+Tools: get_usage, get_bill, reconcile, explain_charge, agentic_decision.
 Transport: stdio via FastMCP (works with Claude Desktop / any MCP client).
 
 Run:  python -m billing_engine.mcp_server
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -51,6 +52,78 @@ def explain_charge(customer_id: str, event_id: str) -> dict[str, Any]:
             "note": f"event contributed qty={ev['quantity']} to {ev['metric']} "
                     f"total={line['total_quantity'] if line else '?'} "
                     f"(plan {ev['plan_version']})"}
+
+
+@mcp.tool()
+def agentic_decision(customer_id: str, period: str, question: str) -> dict[str, Any]:
+    """Answer a billing question using the MCP tools + internal heuristics.
+
+    This is the agentic workflow entry point: an LLM or agent calls this tool
+    with a customer/period/question, and it returns a structured answer citing
+    usage, bill, reconciliation status, and any evidence from the event log.
+    """
+    from billing_engine.reconcile import reconcile as _reconcile_tool
+    usage = _get_usage(get_store(), customer_id, period)
+    bill = _get_bill(get_store(), customer_id, period)
+    recon = _reconcile_tool(get_store(), customer_id, period)
+
+    # Build evidence summary
+    evidence = []
+    for line in bill["lines"]:
+        evidence.append({
+            "metric": line["metric"],
+            "total_quantity": line["total_quantity"],
+            "billable_quantity": line["billable_quantity"],
+            "amount": line["amount"],
+            "plan_version": line["plan_version"]
+        })
+
+    return {
+        "customer_id": customer_id,
+        "period": period,
+        "question": question,
+        "usage": usage,
+        "bill": bill,
+        "reconciliation": {
+            "match": recon["match"],
+            "checked": recon["checked"],
+            "mismatches": recon["mismatches"],
+            "dlq_excluded": recon.get("dlq_excluded", 0),
+            "pending_excluded": recon.get("pending_excluded", 0)
+        },
+        "evidence": evidence,
+        "answer": _format_answer(question, bill, recon, evidence)
+    }
+
+
+def _format_answer(question: str, bill: dict, recon: dict, evidence: list) -> str:
+    """Format a human-readable answer from the agentic decision output."""
+    ql = question.lower()
+    if "reconcile" in ql or "match" in ql:
+        return (f"Reconciliation: match={recon['match']} checked={recon['checked']} "
+                f"mismatches={len(recon['mismatches'])} (dlq_excluded={recon.get('dlq_excluded', 0)}, "
+                f"pending_excluded={recon.get('pending_excluded', 0)})")
+    if "owe" in ql or "bill" in ql or "cost" in ql:
+        total = bill["total_amount"]
+        top = max(bill["lines"], key=lambda l: l["amount"], default=None)
+        return (f"{bill['customer_id']} owes ${total} for {bill['period']} "
+                f"(status={bill['status']}). Top line: {top['metric']} "
+                f"${top['amount']} ({top['billable_quantity']} billable@{top['plan_version']})")
+    if "consume" in ql or "usage" in ql:
+        lines = bill["lines"]
+        total_qty = sum(l["total_quantity"] for l in lines)
+        return (f"{bill['customer_id']} consumed {total_qty} total across "
+                f"{len(lines)} metrics in {bill['period']}; "
+                f"top metric: {max(lines, key=lambda l: l['total_quantity'])['metric']}")
+    if "explain" in ql or "event" in ql:
+        return json.dumps(bill, indent=2)
+    return json.dumps({
+        "customer_id": bill["customer_id"],
+        "period": bill["period"],
+        "total_amount": bill["total_amount"],
+        "status": bill["status"],
+        "lines": bill["lines"]
+    })
 
 
 if __name__ == "__main__":

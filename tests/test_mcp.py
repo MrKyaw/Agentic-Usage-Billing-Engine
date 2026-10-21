@@ -10,7 +10,7 @@ from billing_engine import mcp_server
 from billing_engine.ingest import ingest_one
 from billing_engine.processor import drain
 
-pytestmark = pytest.mark.req("FR7")
+pytestmark = pytest.mark.req("FR7", "NFR-GUARDRAILS")
 
 
 def _seed(store):
@@ -26,7 +26,7 @@ def _payload(result):
 
 async def test_tools_registered():
     names = {t.name for t in await mcp_server.mcp.list_tools()}
-    assert names == {"get_usage", "get_bill", "reconcile", "explain_charge"}
+    assert names == {"get_usage", "get_bill", "reconcile", "explain_charge", "agentic_decision"}
 
 
 async def test_call_tools_in_process(default_store):
@@ -72,7 +72,7 @@ async def test_stdio_protocol_round_trip(default_store, tmp_path):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = {t.name for t in (await session.list_tools()).tools}
-                assert tools == {"get_usage", "get_bill", "reconcile", "explain_charge"}
+                assert tools == {"get_usage", "get_bill", "reconcile", "explain_charge", "agentic_decision"}
                 res = await session.call_tool("get_bill",
                                               {"customer_id": "acme", "period": "2026-10"})
                 assert not res.isError

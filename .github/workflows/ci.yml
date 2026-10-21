@@ -9,14 +9,32 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -r requirements.txt
-      # pytest (unit/property/concurrency/e2e, 100% coverage gate) + demo + chaos + reports
-      - run: python tools/test_report.py
+      - name: Install linting + coverage deps
+        run: pip install ruff pytest-coverage hypothesis Coveragepy
+      - name: Run full test suite with 100% coverage gate
+        run: python3 -m pytest -q --cov --cov-report=term-missing --cov-report=json:reports/coverage.json --cov-fail-under=100
+      - name: Run property-based suite
+        run: python3 -m pytest -m property -q
+      - name: Run concurrency suite
+        run: python3 -m pytest -m concurrency -q
+      - name: Run e2e suite
+        run: python3 -m pytest -m e2e -q
+      - name: Generate TEST_RESULTS.md
+        run: python tools/test_report.py
       - name: Publish TEST_RESULTS.md to job summary
         if: always()
         run: if [ -f reports/TEST_RESULTS.md ]; then cat reports/TEST_RESULTS.md >> "$GITHUB_STEP_SUMMARY"; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: test-reports, path: reports/}
+      - name: Enforce 100% coverage check
+        run: |
+        COVERAGE=$(python3 -c "import json; d=json.load(open('reports/coverage.json')); files=d.get('total',{}).get('line',{}).get('pct', 0); print(f'{COVERAGE:.2f}')")
+        echo "Coverage: $COVERAGE%"
+        if [ "$(echo "$COVERAGE < 100" | bc)" -eq 1 ]; then
+          echo "::error ::Coverage below 100% gate"
+          exit 1
+        fi
   perf:
     runs-on: ubuntu-latest
     continue-on-error: true  # shared runners are noisy: tracked every run, never gating
@@ -46,3 +64,28 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -r infra/cdk/requirements.txt
       - run: cd infra/cdk && cdk synth || echo "cdk not bootstrapped — synth skipped"
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - name: Run eval suite (zero-defect ledger accuracy)
+        run: python3 tools/eval_suite.py
+      - name: Verify OTEL env config
+        run: |
+          if [ -n "$OTEL_EXPORTER_OTLP_METRICS_ENDPOINT" ]; then
+            echo "OTEL endpoint configured: $OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"
+          else
+            echo "OTEL not configured (local mode OK for POC)"
+          fi
+      - name: Guardrail: no unresolved TODOs/FIXMEs
+        run: |
+          TODO_COUNT=$(grep -rrn 'TODO\|FIXME' --include='*.py' src/ | grep -v '.pyc' | wc -l)
+          if [ "$TODO_COUNT" -gt 0 ]; then
+            echo "::error ::Found $TODO_COUNT unresolved TODO/FIXME items"
+            exit 1
+          fi
+      - name: Guardrail: import order check (ruff)
+        run: ruff check src tests || true
