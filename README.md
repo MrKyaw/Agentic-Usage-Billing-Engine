@@ -8,8 +8,9 @@ AI agents answer billing questions over the same data.
 
 > **Status: v0.1 proof of concept.**
 > - **Working and verified:** the full pipeline runs locally (`make api` + `make worker`)
->   or in Docker (`make up`). 207 automated tests, 100% line and branch coverage,
->   performance targets measured against live processes, containerised end-to-end smoke test.
+>   or in Docker (`make up`). 254 automated tests, 100% line and branch coverage,
+>   a 10-eval correctness suite, performance targets measured against live processes,
+>   containerised end-to-end smoke test.
 > - **Blueprint only:** the AWS deployment in `infra/cdk/` describes the target
 >   architecture but is **not yet deployable**; see [AWS deployment](#aws-deployment-blueprint).
 
@@ -24,6 +25,9 @@ AI agents answer billing questions over the same data.
 - [API reference](#api-reference)
 - [End-to-end test walkthrough](#end-to-end-test-walkthrough)
 - [MCP and agentic interface](#mcp-and-agentic-interface)
+- [Streaming, partitions and ordering](#streaming-partitions-and-ordering)
+- [Data lake](#data-lake)
+- [Agentic governance](#agentic-governance)
 - [Testing and quality](#testing-and-quality)
 - [Operations](#operations)
 - [Make targets](#make-targets)
@@ -51,23 +55,28 @@ AI agents answer billing questions over the same data.
 - **Operable from day one.** Structured JSON logs, latency percentiles, queue depth,
   dead-letter queue (DLQ) depth and alarm evaluation at `GET /v1/ops/metrics`, plus
   SLOs and a runbook.
-- **Agent-ready.** An MCP server exposes `get_usage`, `get_bill`, `reconcile` and
-  `explain_charge` as read-only tools.
-- **Event-Driven Resilience.** High-throughput streaming pipelines designed for
-  deterministic event rating, exact partition key ordering, and idempotent state
-  reconciliation. Crash-safe ingestion (transactional raw-log + inbox insert)
-  and DLQ redrive guarantee zero lost events.
+- **Agent-ready.** An MCP server exposes `get_usage`, `get_bill`, `reconcile`,
+  `explain_charge` and `agentic_decision` as read-only tools.
+- **Event-Driven Resilience.** Deterministic rating on high-throughput streams:
+  jump-consistent partitioning (20 → 40 moves ~50% of keys, one owner per key,
+  never split), epoch-fenced cutover that rejects stale producers, per-key
+  sequencing for duplicates/gaps, watermark-bounded reordering across partitions,
+  and SHA-256 checksum chains that trace and repair broken order. Crash-safe
+  ingestion (transactional raw-log + inbox insert) and DLQ redrive guarantee zero
+  lost events. See [docs/STREAMING.md](docs/STREAMING.md).
 - **Agentic Workflows & MCP.** Integrated coding agents and Model Context Protocol
   (MCP) tooling embedded directly into the developer and validation lifecycle.
-  MCP tools: `get_usage`, `get_bill`, `reconcile`, `explain_charge`,
-  `agentic_decision`. Agentic decision tool answers billing questions by combining
-  usage data, rated bills, and reconciliation status with structured evidence.
-- **Production Guardrails.** Automated eval suites, strict CI/CD quality gates, and
-  OpenTelemetry (OTEL) observability to ensure zero-defect ledger accuracy before
-  any production deployment. Eval suite validates idempotency, loss safety, rating
-  correctness, reconciliation match, DLQ redrive integrity, and agentic decision
-  integrity. CI/CD quality gates enforce 100% coverage, zero TODO/FIXME, and
-  import-order compliance.
+  `agentic_decision` combines usage, rated bills and reconciliation status into a
+  structured answer with evidence; skills under [skills/](skills/) cover bill
+  investigation, reconciliation audit and incident response.
+- **Production Guardrails.** A 10-eval correctness suite, strict CI/CD gates
+  (100% line+branch coverage, clean lint, no TODO/FIXME, reconcile proof),
+  HMAC-signed deployment verdicts, risk-tiered human review and OTLP/HTTP
+  OpenTelemetry export. See [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
+- **Auditable data lake.** Immutable partitioned files with atomic snapshot
+  manifests, partition pruning, time travel, compaction and per-file checksums —
+  Iceberg-shaped and format-neutral (Iceberg/Delta/Hudi catalog properties).
+  See [docs/DATALAKE.md](docs/DATALAKE.md).
 
 ## Architecture
 
@@ -232,7 +241,7 @@ bar return `401` by design.
 | POST | `/v1/customers/{cid}/close?period=YYYY-MM` | key | 200 `{"bill", "csv"}` | 401, 422 |
 | GET | `/v1/ops/metrics` | key | 200 counters, latency percentiles, queue, alarms | 401 |
 | GET | `/v1/ops/reconcile?customer=&period=` | key | 200 `{"match", "checked", "mismatches", ...}` | 401, 422 |
-| GET | `/v1/agentic-decision` | key | 200 structured answer (usage, bill, reconciliation, evidence) | 401, 422 |
+| GET | `/v1/ops/ledger-integrity` | key | 200 `{"events", "unique_events", "duplicates", "digest", "breaks"}` | 401 |
 
 Batch requests are validated per event: valid events are accepted and invalid ones are
 listed in `rejected` (partial accept). Append `?sync=true` to either ingest route to
@@ -491,27 +500,70 @@ and is it reconciled?"
 - [docs/AGENTIC.md](docs/AGENTIC.md): what was delegated to coding agents, what stayed
   human-owned (idempotency, rating semantics, failure analysis, security), and the
   corrections that were needed.
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md): how agent output is verified, who reviews
+  what, and whether human review scales.
+- [docs/STREAMING.md](docs/STREAMING.md) and [docs/DATALAKE.md](docs/DATALAKE.md):
+  partition/ordering semantics and the audit lake.
+
+## Streaming, partitions and ordering
+
+Kafka guarantees order **within** a partition, not across them. The repo
+implements the semantics in `billing_engine.partitioning` (broker-free and
+tested), so the same design moves to Kafka/Kinesis unchanged:
+
+- `jump_hash` + `Partitioner` — one owner per key; scaling 20 → 40 moves ~50% of
+  keys (unavoidable when doubling buckets) but never splits a key.
+- `plan_scale` — exact moved/stable key sets before a cutover.
+- `CutoverBarrier` — pause → drain → bump epoch → resume; writes from the old
+  epoch are rejected, so a key cannot be written to two partitions.
+- `PerKeySequencer` — duplicate, gap and buffered (out-of-order) detection.
+- `merge_partitions` + `WatermarkWindow` — deterministic global order with a
+  lateness bound; too-late events go to a side output.
+- `build_chain` / `verify_chain` / `repair_chain` — SHA-256 checksum chains that
+  locate the exact broken record and rebuild a verifiable order.
+- `GET /v1/ops/ledger-integrity` — content digest and duplicate count.
+
+Details and the repair runbook: [docs/STREAMING.md](docs/STREAMING.md).
+
+## Data lake
+
+`billing_engine.datalake` writes immutable, Hive-partitioned files and commits an
+atomic snapshot manifest. It supports partition pruning, time travel
+(`scan(as_of=...)`), compaction, per-file SHA-256 verification and
+Iceberg/Delta/Hudi catalog properties. The raw log stays the source of truth;
+the lake is a rebuildable projection. Details: [docs/DATALAKE.md](docs/DATALAKE.md).
+
+## Agentic governance
+
+`billing_engine.governance` turns review policy into code: gate evaluation
+(tests, coverage, reconcile, TODO/FIXME, lint), change-risk classification,
+the reviewer matrix, HMAC-signed verdicts and review-capacity math. CI runs the
+eval suite and strict gates; money-path changes require two humans plus a
+reconcile proof. Details: [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
 ## Testing and quality
 
 | Layer | Tests | What it covers |
 |---|---|---|
-| Unit | 182 | Models, rating, store, ingest, processor, API, handlers, MCP tools |
+| Unit | 230 | Models, rating, store, ingest, processor, API, handlers, MCP tools, streaming, data lake, governance |
 | Property-based (Hypothesis) | 9 | Exactly-once billing for any event order, duplicate pattern or crash point; reconciliation with arbitrary float quantities; UTC period bucketing; rating invariants |
 | Concurrency | 11 | Parallel ingest and workers, SQLite locking, exactly-once under contention |
 | End-to-end | 4 | Real uvicorn + worker processes, MCP over stdio, `make` targets from a clean shell |
 | Performance (`make perf`) | 3 | Throughput, latency and burst against live processes |
-| Eval suite (`tools/eval_suite.py`) | 6 | Zero-defect ledger accuracy: idempotency, loss safety, rating correctness, reconciliation match, DLQ redrive, agentic decision integrity |
+| Eval suite (`tools/eval_suite.py`) | 10 | Zero-defect ledger accuracy: idempotency, loss safety, rating, reconciliation, DLQ redrive, agentic decision, 20→40 partition scaling, checksum repair, data-lake snapshots, governance deploy gate |
 
 - **Coverage gate:** `make test` fails below 100% line and branch coverage.
+- **Eval gate:** `python3 tools/eval_suite.py` runs the 10 ledger-accuracy evals
+  and exits non-zero on any failure; CI runs it on every push.
 - **Reports:** `make report` writes [reports/TEST_RESULTS.md](reports/TEST_RESULTS.md),
   per-suite pages in `reports/suites/`, and the requirement traceability matrix
   [docs/TEST_PLAN.md](docs/TEST_PLAN.md). `make report-perf` adds performance and a
   Locust load test.
 - **Load tests:** `loadtest/locustfile.py` (`make load` against a running stack) and
   `loadtest/k6_script.js`.
-- **CI** (`.github/workflows/ci.yml`): the test and report job is the gate;
-  performance, compose smoke and CDK jobs are non-blocking.
+- **CI** (`.github/workflows/ci.yml`): strict lint + 100% coverage + property/
+  concurrency/e2e suites + eval suite + guardrail checks (TODO/FIXME, required docs).
+  Performance, compose smoke and CDK jobs are non-blocking.
 
 **Performance** (measured 2026-10-11, Apple Silicon laptop, API + 2 workers as
 separate local processes, 5,000 events per scenario):
@@ -559,6 +611,7 @@ responses are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 | Target | Description |
 |---|---|
 | `make test` | All non-performance tests with the 100% coverage gate |
+| `make eval` | 10 ledger-accuracy evals (idempotency, loss safety, ordering, checksums, lake, governance) |
 | `make e2e` | End-to-end tests only |
 | `make perf` | Performance tests (live processes) |
 | `make report` | Tests + demo + chaos, then generate the Markdown reports |
@@ -571,7 +624,7 @@ responses are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 | `make mcp` | Run the MCP server on stdio |
 | `make reconcile` | Reconcile the current month (local data) |
 | `make load` | Locust for 60 s against `localhost:$(PORT)` |
-| `make lint` | Ruff (advisory) |
+| `make lint` | Ruff, strict (`src`, `tests`, `tools`) |
 | `make up` | Docker: build, start API + worker, wait until healthy |
 | `make down` | Docker: stop and remove containers, keep data |
 | `make docker-reset` | Docker: stop and delete the database volume |
@@ -592,15 +645,18 @@ src/billing_engine/
   query.py            Usage and bill queries
   period_close.py     Freeze bill + CSV export
   reconcile.py        Raw-log replay vs. aggregates
-  observability.py    JSON logs, counters, latency percentiles, alarms
+  partitioning.py     Kafka-style partitions, ordering, checksum repair
+  datalake.py         Iceberg-shaped snapshots, time travel, compaction
+  governance.py       Agent-code gates, risk tiers, signed deploy verdicts
+  observability.py    JSON logs, counters, latency percentiles, OTLP export, alarms
   mcp_server.py       MCP tools (stdio)
   agent_demo.py       Scripted agent harness
 src/handlers.py       Lambda adapter shims (see AWS deployment)
 tests/                Unit, property, concurrency, edge, e2e and perf suites
-tools/                demo, chaos, smoke, compose_smoke, test_report
+tools/                demo, chaos, smoke, compose_smoke, test_report, eval_suite
 loadtest/             Locust and k6 scripts
 infra/cdk/            AWS CDK stack (blueprint)
-docs/                 Architecture, ADRs, SLOs, runbook, cost, security, test plan
+docs/                 Architecture, streaming, data lake, governance, ADRs, SLOs, runbook, cost, security, test plan
 skills/               Agent skills
 reports/              Generated test reports
 history/              Engineering log
@@ -670,6 +726,9 @@ Idempotency, reconciliation and observability were never cut.
 |---|---|
 | [Agentic-Usage-Billing-Engine_PRD.md](Agentic-Usage-Billing-Engine_PRD.md) | Product requirements: goals, functional and non-functional requirements, plan, risks |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture note: data flow, trade-offs, hot partitions, scale math |
+| [docs/STREAMING.md](docs/STREAMING.md) | Kafka-style partitions, 20→40 scaling, cross-partition ordering, checksum repair |
+| [docs/DATALAKE.md](docs/DATALAKE.md) | Iceberg/Delta/Hudi choice, snapshots, time travel, compaction, checksums |
+| [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | Agent-code verification, risk tiers, signed deploy verdicts, review capacity |
 | [docs/ADRS/](docs/ADRS/) | Decision records: idempotency, rating, audit |
 | [docs/SLOS.md](docs/SLOS.md) | SLIs, SLO targets, error-budget policy |
 | [docs/RUNBOOK.md](docs/RUNBOOK.md) | Top three failure modes and responses |

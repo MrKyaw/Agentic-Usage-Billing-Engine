@@ -27,15 +27,39 @@ duplicates safe, crashes recoverable, and reconciliation possible.
 5. **Sync vs async ingest** — ingest only validates + enqueues (p99 <200ms);
    all heavy work is async with queue buffering for graceful degradation.
 
+## Streaming semantics (implemented, broker-free)
+
+Kafka only guarantees order within a partition. The repo implements the
+semantics that matter as a tested library (`billing_engine.partitioning`) so the
+same design moves to Kafka/Kinesis without a rewrite:
+
+- jump-consistent hash: one owner per key, minimal movement when partitions grow;
+- fenced 20 → 40 cutover: pause → drain → bump epoch → resume, stale epochs rejected;
+- per-key sequencer: duplicates, gaps, buffered out-of-order records;
+- k-way merge + watermark: deterministic cross-partition order, bounded lateness;
+- SHA-256 checksum chain: trace the exact broken record and repair the order.
+
+See [STREAMING.md](STREAMING.md) for the scaling/repair runbook.
+
 ## Hot-partition plan
 `aggregates` PK = `customer#period#metric`; whale customers get counter shards
 (`#shard-N`, summed at read) — documented, not built in POC. DDB on-demand +
 adaptive capacity covers the POC rate; provisioned + autoscaling at pilot.
 
+## Data lake
+
+The immutable raw log is the source of truth; `billing_engine.datalake` projects
+it into Iceberg-shaped snapshots (immutable partitioned files + atomic manifest)
+with partition pruning, time travel, compaction and per-file checksums. Local
+JSONL maps to Parquet + an Iceberg catalog in production. See
+[DATALAKE.md](DATALAKE.md).
+
 ## What we did NOT build (and why)
-Kinesis/Kafka+Flink (throughput not needed at POC rate; SQS is cheaper and
-operationally free), multi-region (single-region multi-AZ; active-active is a
-pilot milestone with a consistency strategy), real auth/ERP (API key + CSV stub).
+Kafka/Kinesis **brokers** + Flink (throughput not needed at POC rate; SQS is
+cheaper and operationally free — the partition/ordering/checksum semantics are
+implemented and tested in `partitioning.py`), multi-region (single-region
+multi-AZ; active-active is a pilot milestone with a consistency strategy), real
+auth/ERP (API key + CSV stub).
 
 ## Scale math
 POC target 500 ev/s: SQS + Lambda concurrency 50 × 50-batch ≈ 2.5k ev/s headroom.

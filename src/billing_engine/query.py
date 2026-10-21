@@ -25,7 +25,7 @@ def get_bill(store: Store, customer_id: str, period: str,
     silently folded into a closed bill. `live=True` ignores the freeze (used by
     period close itself)."""
     usage = get_usage(store, customer_id, period)
-    total = round(sum((l["amount"] for l in usage["lines"]), 0.0), 2)
+    total = round(sum((line["amount"] for line in usage["lines"]), 0.0), 2)
     close = None if live else store.get_close(customer_id, period)
     if close is None:
         return {"customer_id": customer_id, "period": period,

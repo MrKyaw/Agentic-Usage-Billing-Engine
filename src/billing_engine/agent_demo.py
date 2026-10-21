@@ -30,7 +30,7 @@ def _explain(customer_id: str, event_id: str) -> dict:
     if not ev or ev["customer_id"] != customer_id:
         return {"found": False, "event_id": event_id, "customer_id": customer_id}
     bill = _bill(store, customer_id, ev["period"])
-    line = next((l for l in bill["lines"] if l["metric"] == ev["metric"]), None)
+    line = next((line for line in bill["lines"] if line["metric"] == ev["metric"]), None)
     return {"found": True, "event": ev, "period_bill_line": line,
             "bill_total": bill["total_amount"],
             "note": f"event contributed qty={ev['quantity']} to {ev['metric']} "
@@ -48,7 +48,7 @@ def answer(q: str, customer: str, period: str, event_id: str = "") -> str:
         return json.dumps(_explain(customer, event_id or "evt-demo-001"))
     if "owe" in ql or "bill" in ql or "cost" in ql or "most" in ql:
         b = _bill(store, customer, period)
-        top = max(b["lines"], key=lambda l: l["amount"], default=None)
+        top = max(b["lines"], key=lambda line: line["amount"], default=None)
         return (f"{customer} owes ${b['total_amount']} for {period} "
                 f"(status={b['status']}). Top line: {top}")
     return json.dumps(_usage(store, customer, period))

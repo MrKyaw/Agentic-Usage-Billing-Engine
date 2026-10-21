@@ -1,4 +1,4 @@
-.PHONY: test e2e perf report report-perf demo chaos api worker mcp reconcile lint load smoke \
+.PHONY: test eval e2e perf report report-perf demo chaos api worker mcp reconcile lint load smoke \
 	up down docker-reset logs compose-smoke
 
 # the package lives in src/ and is not pip-installed
@@ -7,6 +7,9 @@ PORT ?= 8000
 
 test:
 	pytest -q --cov --cov-report=term-missing --cov-fail-under=100
+
+eval:
+	python tools/eval_suite.py
 
 e2e:
 	pytest -q -m e2e
@@ -42,7 +45,7 @@ reconcile:
 	python -m billing_engine.reconcile --period $$(date +%Y-%m)
 
 lint:
-	ruff check src tests || true
+	ruff check src tests tools
 
 load:
 	locust -f loadtest/locustfile.py --headless -u 50 -r 10 -t 60s --host http://localhost:$(PORT)

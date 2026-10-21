@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from billing_engine.config import SETTINGS
 from billing_engine.ingest import IngestRejected, ingest_batch, ingest_one
 from billing_engine.observability import METRICS
+from billing_engine.partitioning import ledger_integrity
 from billing_engine.period_close import close_period
 from billing_engine.query import get_bill, get_usage
 from billing_engine.reconcile import reconcile
@@ -113,6 +114,12 @@ def ops_reconcile(customer: str | None = None,
                   period: str | None = Query(None, pattern=PERIOD),
                   _k: None = Depends(require_key)) -> dict[str, Any]:
     return reconcile(get_store(), customer, period)
+
+
+@app.get("/v1/ops/ledger-integrity")
+def ops_ledger_integrity(_k: None = Depends(require_key)) -> dict[str, Any]:
+    """Content-addressed digest of the raw ledger (order + duplicates)."""
+    return ledger_integrity(get_store().all_raw_payloads())
 
 
 @app.get("/ui", include_in_schema=False, response_class=HTMLResponse)

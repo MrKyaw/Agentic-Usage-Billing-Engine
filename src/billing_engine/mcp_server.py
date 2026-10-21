@@ -46,7 +46,7 @@ def explain_charge(customer_id: str, event_id: str) -> dict[str, Any]:
     if not ev or ev["customer_id"] != customer_id:
         return {"found": False, "event_id": event_id, "customer_id": customer_id}
     bill = _get_bill(store, customer_id, ev["period"])
-    line = next((l for l in bill["lines"] if l["metric"] == ev["metric"]), None)
+    line = next((line for line in bill["lines"] if line["metric"] == ev["metric"]), None)
     return {"found": True, "event": ev, "period_bill_line": line,
             "bill_total": bill["total_amount"],
             "note": f"event contributed qty={ev['quantity']} to {ev['metric']} "
@@ -103,18 +103,21 @@ def _format_answer(question: str, bill: dict, recon: dict, evidence: list) -> st
         return (f"Reconciliation: match={recon['match']} checked={recon['checked']} "
                 f"mismatches={len(recon['mismatches'])} (dlq_excluded={recon.get('dlq_excluded', 0)}, "
                 f"pending_excluded={recon.get('pending_excluded', 0)})")
+    if not bill["lines"]:
+        return (f"No rated usage for {bill['customer_id']} in {bill['period']} "
+                f"(status={bill['status']}).")
     if "owe" in ql or "bill" in ql or "cost" in ql:
         total = bill["total_amount"]
-        top = max(bill["lines"], key=lambda l: l["amount"], default=None)
+        top = max(bill["lines"], key=lambda line: line["amount"], default=None)
         return (f"{bill['customer_id']} owes ${total} for {bill['period']} "
                 f"(status={bill['status']}). Top line: {top['metric']} "
                 f"${top['amount']} ({top['billable_quantity']} billable@{top['plan_version']})")
     if "consume" in ql or "usage" in ql:
         lines = bill["lines"]
-        total_qty = sum(l["total_quantity"] for l in lines)
+        total_qty = sum(line["total_quantity"] for line in lines)
         return (f"{bill['customer_id']} consumed {total_qty} total across "
                 f"{len(lines)} metrics in {bill['period']}; "
-                f"top metric: {max(lines, key=lambda l: l['total_quantity'])['metric']}")
+                f"top metric: {max(lines, key=lambda line: line['total_quantity'])['metric']}")
     if "explain" in ql or "event" in ql:
         return json.dumps(bill, indent=2)
     return json.dumps({

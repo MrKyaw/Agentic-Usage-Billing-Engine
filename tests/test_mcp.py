@@ -56,6 +56,44 @@ async def test_explain_charge_not_found_or_wrong_customer(default_store):
     assert mcp_server.explain_charge("globex", "m-1")["found"] is False
 
 
+def test_agentic_decision_answers_each_question_type(default_store):
+    _seed(default_store)
+    reconciled = mcp_server.agentic_decision("acme", "2026-10", "Is this reconciled?")
+    assert reconciled["reconciliation"]["match"] is True
+    assert reconciled["reconciliation"]["checked"] == 2
+    assert len(reconciled["evidence"]) == 2
+    assert reconciled["answer"].startswith("Reconciliation: match=True")
+
+    owed = mcp_server.agentic_decision("acme", "2026-10", "How much do I owe?")
+    assert "owes $60.0" in owed["answer"] and "status=" in owed["answer"]
+
+    consumed = mcp_server.agentic_decision("acme", "2026-10", "What did we consume?")
+    assert "consumed" in consumed["answer"] and "metrics in 2026-10" in consumed["answer"]
+
+    explained = mcp_server.agentic_decision("acme", "2026-10", "Explain the event")
+    assert json.loads(explained["answer"])["total_amount"] == 60.0
+
+    default = mcp_server.agentic_decision("acme", "2026-10", "hello")
+    assert json.loads(default["answer"])["customer_id"] == "acme"
+
+
+def test_agentic_decision_handles_customer_with_no_usage(default_store):
+    result = mcp_server.agentic_decision("ghost", "2026-10", "What do I owe?")
+    assert result["bill"]["lines"] == []
+    assert result["evidence"] == []
+    assert result["answer"].startswith("No rated usage for ghost")
+
+
+async def test_agentic_decision_tool_via_mcp(default_store):
+    _seed(default_store)
+    payload = _payload(await mcp_server.mcp.call_tool(
+        "agentic_decision", {"customer_id": "acme", "period": "2026-10",
+                             "question": "What do I owe?"}))
+    assert payload["reconciliation"]["match"] is True
+    assert len(payload["evidence"]) == 2
+    assert "owes $60.0" in payload["answer"]
+
+
 @pytest.mark.e2e
 async def test_stdio_protocol_round_trip(default_store, tmp_path):
     from mcp import ClientSession, StdioServerParameters

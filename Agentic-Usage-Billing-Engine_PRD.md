@@ -86,6 +86,10 @@ This POC proves the **core architectural bet** on a thin vertical slice: an even
 | Security | API key auth, least-privilege IAM, encryption at rest and in transit, no PII in logs |
 | Cost | Serverless pay-per-use; record estimated cost per 1M events |
 | Maintainability | IaC for everything; unit tests on rating and idempotency logic |
+| Streaming resilience | Deterministic per-key ordering; 20 → 40 partition scaling moves ~50% of keys with one owner each; bounded lateness; checksum trace + repair |
+| Data lake | Immutable partitioned files, atomic snapshots, time travel, compaction, per-file checksums; Iceberg-shaped and format-neutral |
+| Agentic governance | 100% coverage + reconcile + lint/TODO gates; HMAC-signed deploy verdict; risk-tiered human review (2 reviewers on money paths) |
+| Production guardrails | Automated 10-eval suite, strict CI/CD gates, OTLP/HTTP OpenTelemetry export with bounded failure isolation |
 
 ## 7. Proposed Architecture
 
@@ -111,7 +115,7 @@ Producers ─► API Gateway ─► Ingest Lambda ─► SQS (FIFO or standard +
 - At-least-once delivery + idempotent consumer, rather than chasing exactly-once transport.
 - DynamoDB for dedupe and aggregates (conditional writes, atomic counters); S3 as the source of truth for replay.
 - Aggregates are derived and rebuildable from the raw log, which is what makes reconciliation possible.
-- Alternative considered for production: Kinesis/Kafka + Flink for higher throughput and windowing (documented, not built).
+- Alternative considered for production: Kinesis/Kafka + Flink for higher throughput and windowing. The POC ships the broker-free semantics (partitioning, fenced scaling, watermarking, checksum repair) in `billing_engine.partitioning`; only the managed broker/Flink runtime is deferred.
 
 **Suggested stack:** Python or Go (pick one), AWS CDK or Terraform, pytest, k6 or Locust for load testing.
 

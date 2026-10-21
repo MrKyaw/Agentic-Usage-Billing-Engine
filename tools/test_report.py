@@ -56,6 +56,18 @@ REQUIREMENTS = {
     "NFR-LATENCY": ("Latency", "Ingest p99 < 200 ms; event-to-aggregate p95 < 5 s"),
     "NFR-CORRECTNESS": ("Correctness",
                         "0 double-counts under 10% duplicates; 0 lost events under failures"),
+    "NFR-STREAMING": ("Streaming resilience",
+                      "One owner per key; 20->40 scaling with bounded movement; "
+                      "cross-partition ordering; checksum trace + repair"),
+    "NFR-DATALAKE": ("Data lake",
+                     "Atomic snapshots, partition pruning, time travel, compaction, "
+                     "per-file checksums"),
+    "NFR-GOVERNANCE": ("Agentic governance",
+                       "100% coverage + reconcile + lint/TODO gates; signed verdict; "
+                       "risk-tiered reviewer requirements"),
+    "NFR-GUARDRAILS": ("Production guardrails",
+                       "Automated eval suite, strict CI/CD gates, OTLP/HTTP "
+                       "OpenTelemetry observability"),
     "NFR-SECURITY": ("Security", "API key auth, no PII in logs"),
 }
 KINDS = {
