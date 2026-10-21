@@ -645,7 +645,12 @@ not the latency SLO.
 
 Performance figures are sensitive to machine load. Run them on an otherwise idle
 machine; with the Docker stack running alongside, the latency SLO was missed
-(service p99 231.8 ms) while every other check still passed.
+(service p99 231.8 ms) while every other check still passed. The CI `perf` job
+runs on GitHub's shared 4-vCPU runner, which shares its cores with the load
+generator: it keeps the service-side 200 ms SLO but uses a runner-adjusted
+envelope for throughput and the end-to-end guardrail, so a gross regression is
+still caught without failing on a shared runner. The reference figures above
+come from an idle machine.
 
 ## Operations
 

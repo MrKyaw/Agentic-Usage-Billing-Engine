@@ -38,6 +38,16 @@ jobs:
   perf:
     runs-on: ubuntu-latest
     continue-on-error: true  # shared runners are noisy: tracked every run, never gating
+    env:
+      # GitHub's shared runner has 4 vCPUs and shares them with the load
+      # generator, so it cannot be the reference environment for the PRD
+      # throughput target. The service-side latency SLO (200 ms) is asserted
+      # unchanged; throughput and the end-to-end client guardrail use a
+      # runner-adjusted envelope. Reference-machine figures (>= 500 ev/s,
+      # service p99 ~20 ms) live in reports/TEST_RESULTS.md.
+      PERF_MIN_EPS: 400
+      PERF_TARGET_EPS: 400
+      PERF_CLIENT_P99_MS: 1200
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
